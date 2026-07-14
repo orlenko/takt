@@ -12,7 +12,12 @@ as WAV or MIDI (including drag-out); never lose work.
 
 Shipped ahead of plan: pattern slots A–H with chaining (loop the whole chain
 in order, or just the slot being edited; `SequencerState.playOrder` already
-supports arbitrary orders like A-A-B for later).
+supports arbitrary orders like A-A-B for later); style kits (Nine-Oh, Dust)
+sharing the TAKT-1 voice roles; cued pattern switching in the hardware
+tradition (selecting a slot while playing shows it for editing immediately
+and takes over playback at the pattern boundary; content edits stay
+immediate, structure changes land on the bar). Next in this family: song
+mode, a UI over the same playOrder mechanism.
 
 Non-goals in v1 (deferred, the model must not preclude them): 32-step UI,
 probability/ratchets, polymeter, user sample import, MIDI learn mode, MIDI

@@ -45,10 +45,15 @@ public final class Sequencer {
     private var stepIndex = 0
     private var orderPos = 0
     private var nextTime: Double = 0 // host-clock seconds
+    private var cuedOrder: [Int]?
 
     /// Called on the sequencer queue for every scheduled step with
     /// (patternIndex, step, hostSeconds when it sounds). Hop to main for UI.
     public var onStep: (@Sendable (Int, Int, Double) -> Void)?
+
+    /// Called on the sequencer queue when a cued play order takes effect at
+    /// a pattern boundary (hardware-style quantized switching).
+    public var onOrderChange: (@Sendable ([Int]) -> Void)?
 
     public private(set) var isPlaying = false
 
@@ -64,8 +69,17 @@ public final class Sequencer {
     }
 
     /// Push a fresh snapshot; picked up within the scheduling horizon.
+    /// Content changes (cells, tempo, swing, mutes) belong here. Play-order
+    /// changes while playing should go through `cueOrder` instead, so they
+    /// land on the pattern boundary.
     public func update(_ newState: SequencerState) {
         queue.async { self.state = newState }
+    }
+
+    /// Cue a play order to take effect when the current pattern finishes
+    /// (hardware tradition: select sloppy, land tight). Pass nil to cancel.
+    public func cueOrder(_ order: [Int]?) {
+        queue.async { self.cuedOrder = order }
     }
 
     public func start() {
@@ -74,6 +88,7 @@ public final class Sequencer {
         queue.async {
             self.stepIndex = 0
             self.orderPos = 0
+            self.cuedOrder = nil
             self.nextTime = Self.hostSecondsNow() + 0.06
             self.scheduleWindow()
         }
@@ -107,8 +122,7 @@ public final class Sequencer {
             let pattern = s.patterns[patternIndex]
             guard pattern.stepCount > 0 else { return }
             if stepIndex >= pattern.stepCount {
-                stepIndex = 0
-                orderPos = (orderPos + 1) % s.playOrder.count
+                wrapPattern()
                 continue
             }
             let step = stepIndex
@@ -130,9 +144,21 @@ public final class Sequencer {
                                             swingPercent: s.swingPercent)
             stepIndex += 1
             if stepIndex >= pattern.stepCount {
-                stepIndex = 0
-                orderPos = (orderPos + 1) % s.playOrder.count
+                wrapPattern()
             }
+        }
+    }
+
+    /// Pattern boundary: apply a pending cue, or walk the chain.
+    private func wrapPattern() {
+        stepIndex = 0
+        if let cued = cuedOrder {
+            cuedOrder = nil
+            state.playOrder = cued.isEmpty ? [0] : cued
+            orderPos = 0
+            onOrderChange?(state.playOrder)
+        } else {
+            orderPos = (orderPos + 1) % max(1, state.playOrder.count)
         }
     }
 }

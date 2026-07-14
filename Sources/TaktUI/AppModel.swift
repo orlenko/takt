@@ -20,8 +20,14 @@ public final class AppModel: ObservableObject {
     @Published var isExporting = false
     /// Pattern slot currently sounding (nil when stopped).
     @Published var playingSlot: Int?
+    /// Slot cued to take over at the next pattern boundary (nil when none).
+    @Published var cuedSlot: Int?
     /// true: loop the whole chain of slots in order; false: loop the editing slot.
     @Published var loopChain = true
+
+    /// The play order currently sounding; cued changes replace it when they
+    /// land at a boundary (see Sequencer.onOrderChange).
+    private var activePlayOrder: [Int] = [0]
 
     static let maxSlots = 8
     @Published var themeID: ThemeID {
@@ -91,6 +97,9 @@ public final class AppModel: ObservableObject {
         do {
             let sequencer = try ensureEngine()
             pendingSteps.removeAll()
+            activePlayOrder = restingOrder()
+            cuedSlot = nil
+            sequencer.cueOrder(nil)
             sequencer.update(currentState())
             sequencer.start()
             isPlaying = true
@@ -106,6 +115,7 @@ public final class AppModel: ObservableObject {
         pendingSteps.removeAll()
         displayedStep = nil
         playingSlot = nil
+        cuedSlot = nil
         gridNeedsDisplay?()
     }
 
@@ -183,12 +193,40 @@ public final class AppModel: ObservableObject {
 
     var editingSlot: Int { project.currentPatternIndex }
 
+    /// Hardware tradition: what you select is what plays next. While playing,
+    /// selecting a slot shows it for editing immediately and cues it to take
+    /// over at the pattern boundary; selecting the sounding slot cancels a
+    /// pending cue. While stopped, selection is just selection.
     func selectSlot(_ index: Int) {
         guard project.patterns.indices.contains(index) else { return }
         project.currentPatternIndex = index
         activeSeedName = nil
-        pushState() // play order changes in slot-loop mode
+        if isPlaying {
+            if index == playingSlot {
+                cuedSlot = nil
+                sequencer?.cueOrder(nil)
+            } else {
+                cuedSlot = index
+                sequencer?.cueOrder(cuedOrder(startingAt: index))
+            }
+            pushState() // content refresh; play order untouched until the cue lands
+        } else {
+            pushState()
+        }
         gridNeedsDisplay?()
+    }
+
+    /// Play order when starting fresh (stopped → play).
+    private func restingOrder() -> [Int] {
+        loopChain ? Array(project.patterns.indices) : [editingSlot]
+    }
+
+    /// Play order for a cue: slot mode traps the slot; chain mode continues
+    /// the chain from the cued slot onward.
+    private func cuedOrder(startingAt slot: Int) -> [Int] {
+        guard loopChain else { return [slot] }
+        let count = project.patterns.count
+        return (0..<count).map { (slot + $0) % count }
     }
 
     /// Duplicates the current slot into a new slot right after it and
@@ -198,8 +236,7 @@ public final class AppModel: ObservableObject {
         let copy = project.currentPattern
         project.patterns.insert(copy, at: project.currentPatternIndex + 1)
         project.currentPatternIndex += 1
-        pushState()
-        gridNeedsDisplay?()
+        resyncAfterStructureChange()
     }
 
     /// Adds an empty slot at the end and selects it.
@@ -208,8 +245,7 @@ public final class AppModel: ObservableObject {
         project.patterns.append(Pattern(kit: kit))
         project.currentPatternIndex = project.patterns.count - 1
         activeSeedName = nil
-        pushState()
-        gridNeedsDisplay?()
+        resyncAfterStructureChange()
     }
 
     func deleteSlot(_ index: Int) {
@@ -219,13 +255,30 @@ public final class AppModel: ObservableObject {
         if project.currentPatternIndex >= project.patterns.count {
             project.currentPatternIndex = project.patterns.count - 1
         }
+        resyncAfterStructureChange()
+    }
+
+    /// Adding/removing slots shifts indices, so a pending cue and the active
+    /// order can go stale; rebuild both immediately (the one structural case
+    /// that does not wait for the boundary).
+    private func resyncAfterStructureChange() {
+        cuedSlot = nil
+        sequencer?.cueOrder(nil)
+        activePlayOrder = restingOrder()
         pushState()
         gridNeedsDisplay?()
     }
 
     func setLoopChain(_ chain: Bool) {
         loopChain = chain
-        pushState()
+        if isPlaying {
+            // Structure change: land it on the boundary like any other cue.
+            let target = chain ? (playingSlot ?? editingSlot) : editingSlot
+            sequencer?.cueOrder(cuedOrder(startingAt: target))
+            cuedSlot = target == playingSlot ? nil : target
+        } else {
+            pushState()
+        }
     }
 
     // MARK: - Kits
@@ -254,8 +307,9 @@ public final class AppModel: ObservableObject {
         return index < letters.count ? String(letters[index]) : "\(index + 1)"
     }
 
+    /// Order used for state pushes and exports: what is (or would be) sounding.
     private var playOrder: [Int] {
-        loopChain ? Array(project.patterns.indices) : [project.currentPatternIndex]
+        isPlaying ? activePlayOrder : restingOrder()
     }
 
     // MARK: - Export
@@ -445,6 +499,12 @@ public final class AppModel: ObservableObject {
         sequencer.onStep = { [weak self] slot, step, time in
             DispatchQueue.main.async {
                 self?.pendingSteps.append((slot, step, time))
+            }
+        }
+        sequencer.onOrderChange = { [weak self] order in
+            DispatchQueue.main.async {
+                self?.activePlayOrder = order
+                self?.cuedSlot = nil
             }
         }
         self.engine = engine

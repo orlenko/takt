@@ -234,18 +234,23 @@ struct PatternBarView: View {
     private func slotChip(_ index: Int) -> some View {
         let theme = model.theme
         let playing = model.playingSlot == index && model.isPlaying
+        let cued = model.cuedSlot == index && model.isPlaying
         return Button {
             model.selectSlot(index)
         } label: {
             HStack(spacing: 5) {
+                // Filled dot: sounding now. Hollow dot: cued, takes over at
+                // the end of the current pattern.
                 Circle()
-                    .fill(theme.accent.swiftUI)
-                    .frame(width: 5, height: 5)
-                    .opacity(playing ? 1 : 0)
+                    .strokeBorder(theme.accent.swiftUI, lineWidth: cued && !playing ? 1.2 : 0)
+                    .background(Circle().fill(playing ? theme.accent.swiftUI : .clear))
+                    .frame(width: 5.5, height: 5.5)
+                    .opacity(playing || cued ? 1 : 0)
                 Text(AppModel.slotName(index))
             }
         }
         .buttonStyle(ChipStyle(theme: theme, active: model.editingSlot == index))
+        .help(cued ? "Cued: plays when the current pattern ends" : "")
         .contextMenu {
             Button("Duplicate") {
                 model.selectSlot(index)
