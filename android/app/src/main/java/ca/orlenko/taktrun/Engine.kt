@@ -27,19 +27,25 @@ object Engine {
     @Volatile var isPlaying = false
         private set
 
-    private var samples: Map<String, FloatArray> = emptyMap()
+    /** Style kit currently sounding; swaps take effect on the next hit. */
+    @Volatile var kitId: String = "takt-1"
+
+    private var kits: Map<String, Map<String, FloatArray>> = emptyMap()
     private var mixThread: Thread? = null
 
     fun init(context: Context) {
-        if (samples.isNotEmpty()) return
-        samples = Takt.voices.associate { voice ->
-            voice.id to WavLoader.load(context, "TAKT-1/${voice.file}")
+        if (kits.isNotEmpty()) return
+        kits = Takt.kits.associate { kit ->
+            kit.id to Takt.voices.associate { voice ->
+                voice.id to WavLoader.load(context, "${kit.assetDir}/${voice.file}")
+            }
         }
     }
 
     fun load(newProject: Project) {
         project = newProject
         tempoBPM = newProject.tempoBPM
+        kitId = newProject.kitId
     }
 
     fun play() {
@@ -106,6 +112,7 @@ object Engine {
                 pattern = p.patterns[patternPos]
             }
 
+            val samples = kits[kitId] ?: kits.values.first()
             for ((t, trackData) in pattern.tracks.withIndex()) {
                 if (stepIndex >= trackData.steps.size) continue
                 val step = trackData.steps[stepIndex]

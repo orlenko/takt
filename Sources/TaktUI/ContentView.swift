@@ -206,6 +206,15 @@ struct PatternBarView: View {
                     .help("Add an empty slot")
             }
             Spacer()
+            Text("KIT")
+                .font(.system(size: 9, design: .monospaced).weight(.medium))
+                .kerning(1.2)
+                .foregroundStyle(theme.faint.swiftUI)
+            ForEach(Kit.all, id: \.id) { kit in
+                Button(kit.name) { model.selectKit(kit) }
+                    .buttonStyle(ChipStyle(theme: theme, active: model.project.kitID == kit.id))
+            }
+            Spacer().frame(width: 14)
             Text("LOOP")
                 .font(.system(size: 9, design: .monospaced).weight(.medium))
                 .kerning(1.2)

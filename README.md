@@ -11,9 +11,11 @@ with giant tempo controls built for mid-stride use.
 
 ## TAKT (macOS)
 
-- 8-voice sample engine with the built-in TAKT-1 kit (synthesized offline,
-  baked to WAVs, committed) and a lookahead sequencer scheduled on the audio
-  clock.
+- 8-voice sample engine with three built-in style kits, all synthesized
+  offline and baked to committed WAVs: TAKT-1 (808-flavored synth), Nine-Oh
+  (909-flavored electronic), and Dust (lo-fi boom-bap). Kits share the same
+  eight voice roles, so patterns, colors, and MIDI export are identical
+  across styles; a lookahead sequencer schedules on the audio clock.
 - 16-step pattern grid: click to toggle, right-click to cycle velocity
   (soft / normal / accent), drag to paint. Hue names the voice, brightness is
   velocity.

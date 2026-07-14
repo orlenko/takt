@@ -9,21 +9,24 @@ import TaktCore
 /// `playOrder` is the looped chain of pattern indices: `[0]` loops slot A,
 /// `[0, 1]` alternates A → B, `[0, 0, 1]` plays A twice then B.
 public struct SequencerState: Sendable {
+    public var kit: Kit
     public var patterns: [TaktCore.Pattern]
     public var playOrder: [Int]
     public var tempoBPM: Double
     public var swingPercent: Double
 
-    public init(patterns: [TaktCore.Pattern], playOrder: [Int],
+    public init(kit: Kit = .takt1, patterns: [TaktCore.Pattern], playOrder: [Int],
                 tempoBPM: Double, swingPercent: Double) {
+        self.kit = kit
         self.patterns = patterns
         self.playOrder = playOrder.isEmpty ? [0] : playOrder
         self.tempoBPM = tempoBPM
         self.swingPercent = swingPercent
     }
 
-    public init(pattern: TaktCore.Pattern, tempoBPM: Double, swingPercent: Double) {
-        self.init(patterns: [pattern], playOrder: [0],
+    public init(kit: Kit = .takt1, pattern: TaktCore.Pattern,
+                tempoBPM: Double, swingPercent: Double) {
+        self.init(kit: kit, patterns: [pattern], playOrder: [0],
                   tempoBPM: tempoBPM, swingPercent: swingPercent)
     }
 }
@@ -37,7 +40,6 @@ public final class Sequencer {
 
     private let queue = DispatchQueue(label: "takt.sequencer", qos: .userInteractive)
     private let graph: DrumGraph
-    private let kit: Kit
     private var state: SequencerState
     private var timer: DispatchSourceTimer?
     private var stepIndex = 0
@@ -50,9 +52,8 @@ public final class Sequencer {
 
     public private(set) var isPlaying = false
 
-    public init(graph: DrumGraph, kit: Kit, state: SequencerState) {
+    public init(graph: DrumGraph, state: SequencerState) {
         self.graph = graph
-        self.kit = kit
         self.state = state
     }
 
@@ -116,7 +117,7 @@ public final class Sequencer {
                 guard track.steps.indices.contains(step) else { continue }
                 let hit = track.steps[step]
                 guard hit.isOn, pattern.isAudible(trackIndex: i) else { continue }
-                let choke = ChokeMath.limit(kit: kit, pattern: pattern, trackIndex: i,
+                let choke = ChokeMath.limit(kit: s.kit, pattern: pattern, trackIndex: i,
                                             step: step, tempoBPM: s.tempoBPM,
                                             swingPercent: s.swingPercent)
                 let time = AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: nextTime))

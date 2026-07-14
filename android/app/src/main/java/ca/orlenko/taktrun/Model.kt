@@ -33,12 +33,24 @@ data class Project(
     val tempoBPM: Double,
     val swingPercent: Double,
     val patterns: List<Pattern>,
+    val kitId: String = "takt-1",
 )
 
 object Takt {
     data class Voice(val id: String, val file: String, val chokeGroup: Int?)
 
-    /** TAKT-1 kit, matching Kit.takt1 in the Swift source. */
+    data class Kit(val id: String, val name: String) {
+        val assetDir get() = id.uppercase()
+    }
+
+    /** Built-in kits; same voice roles everywhere, different samples. */
+    val kits = listOf(
+        Kit("takt-1", "TAKT-1"),
+        Kit("takt-2", "Nine-Oh"),
+        Kit("takt-3", "Dust"),
+    )
+
+    /** Voice roles, matching Kit.takt1 in the Swift source. */
     val voices = listOf(
         Voice("kick", "kick.wav", null),
         Voice("snare", "snare.wav", null),
@@ -73,11 +85,13 @@ object Takt {
             Pattern(patternJson.optString("name", "Pattern"), tracks)
         }
         require(patterns.isNotEmpty()) { "no patterns in file" }
+        val kitId = root.optString("kitID", "takt-1")
         return Project(
             name = name,
             tempoBPM = root.optDouble("tempoBPM", 120.0),
             swingPercent = root.optDouble("swingPercent", 50.0),
             patterns = patterns,
+            kitId = if (kits.any { it.id == kitId }) kitId else "takt-1",
         )
     }
 

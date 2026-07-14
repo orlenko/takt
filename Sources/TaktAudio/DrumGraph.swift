@@ -6,7 +6,7 @@ import TaktCore
 /// instead of queueing) → per-voice mixer → main mixer (0.8) → peak limiter →
 /// output.
 public final class DrumGraph {
-    public let buffers: KitBuffers
+    public private(set) var buffers: KitBuffers
 
     private final class VoiceChannel {
         let players: [AVAudioPlayerNode]
@@ -51,6 +51,13 @@ public final class DrumGraph {
         engine.connect(engine.mainMixerNode, to: limiter, format: nil)
         engine.connect(limiter, to: engine.outputNode, format: nil)
         engine.mainMixerNode.outputVolume = 0.8
+    }
+
+    /// Swap the sample set. All built-in kits share the same voice roles, so
+    /// the node graph stays valid; only the buffers change. Already-scheduled
+    /// hits keep their old sound, new hits use the new kit.
+    public func setBuffers(_ newBuffers: KitBuffers) {
+        buffers = newBuffers
     }
 
     /// Call once after `engine.start()`.

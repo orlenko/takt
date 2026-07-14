@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 public final class AppModel: ObservableObject {
-    let kit = Kit.takt1
+    var kit: Kit { Kit.kit(id: project.kitID) ?? .takt1 }
 
     @Published var project: Project
     @Published var isPlaying = false
@@ -228,6 +228,27 @@ public final class AppModel: ObservableObject {
         pushState()
     }
 
+    // MARK: - Kits
+
+    func selectKit(_ newKit: Kit) {
+        guard newKit.id != project.kitID else { return }
+        project.kitID = newKit.id
+        refreshKitBuffers()
+        pushState()
+        gridNeedsDisplay?()
+    }
+
+    /// Point the running graph at the current kit's samples. No-op before
+    /// the engine exists; the kit loads lazily with it.
+    private func refreshKitBuffers() {
+        guard let graph else { return }
+        do {
+            graph.setBuffers(try KitBuffers(kit: kit))
+        } catch {
+            engineError = "\(error)"
+        }
+    }
+
     static func slotName(_ index: Int) -> String {
         let letters = Array("ABCDEFGH")
         return index < letters.count ? String(letters[index]) : "\(index + 1)"
@@ -335,6 +356,8 @@ public final class AppModel: ObservableObject {
             project = loaded
             project.currentPatternIndex = min(project.currentPatternIndex,
                                               project.patterns.count - 1)
+            if Kit.kit(id: project.kitID) == nil { project.kitID = Kit.takt1.id }
+            refreshKitBuffers()
             activeSeedName = nil
             pushState()
             gridNeedsDisplay?()
@@ -400,7 +423,8 @@ public final class AppModel: ObservableObject {
     // MARK: - Engine plumbing
 
     private func currentState() -> SequencerState {
-        SequencerState(patterns: project.patterns,
+        SequencerState(kit: kit,
+                       patterns: project.patterns,
                        playOrder: playOrder,
                        tempoBPM: project.tempoBPM,
                        swingPercent: project.swingPercent)
@@ -417,7 +441,7 @@ public final class AppModel: ObservableObject {
         let graph = DrumGraph(engine: engine, buffers: buffers)
         try engine.start()
         graph.startPlayers()
-        let sequencer = Sequencer(graph: graph, kit: kit, state: currentState())
+        let sequencer = Sequencer(graph: graph, state: currentState())
         sequencer.onStep = { [weak self] slot, step, time in
             DispatchQueue.main.async {
                 self?.pendingSteps.append((slot, step, time))

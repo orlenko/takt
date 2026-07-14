@@ -47,6 +47,24 @@ final class BounceTests: XCTestCase {
         XCTAssertGreaterThan(try rms(of: url, fromSecond: 0, toSecond: 0.05), 0.05)
     }
 
+    func testEveryKitLoadsAndSounds() throws {
+        for kit in Kit.all {
+            let buffers = try KitBuffers(kit: kit)
+            for voice in kit.voices {
+                XCTAssertNotNil(buffers.hitBuffer(voiceID: voice.id, gain: 1),
+                                "\(kit.name)/\(voice.id) must load")
+            }
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("takt-kit-\(kit.id)-\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let seed = Seeds.house
+            try Bounce.render(pattern: seed.pattern(kit: kit), kit: kit,
+                              tempoBPM: seed.tempoBPM, swingPercent: seed.swingPercent,
+                              loops: 1, to: url)
+            XCTAssertGreaterThan(try rms(of: url), 0.02, "\(kit.name) must be audible")
+        }
+    }
+
     func testChainRendersSlotsInOrder() throws {
         // Slot A: lone kick at step 0. Slot B: lone snare at step 0.
         // Chain A→B at 120 BPM: kick energy at 0 s, silence late in A,

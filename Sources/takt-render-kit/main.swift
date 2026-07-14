@@ -1,7 +1,8 @@
-// Bakes the TAKT-1 kit: renders the eight synth voices (ported 1:1 from the
-// design mock's Web Audio recipes) to float32 WAV one-shots. Run manually:
-//   swift run takt-render-kit [output-dir]
-// Output defaults to Sources/TaktAudio/Resources/TAKT-1; commit the WAVs.
+// Bakes the built-in kits: renders each kit's eight synth voices to float32
+// WAV one-shots (TAKT-1 ported 1:1 from the design mock's Web Audio recipes;
+// Nine-Oh and Dust are style variants). Run manually:
+//   swift run takt-render-kit [resources-dir]
+// Output defaults to Sources/TaktAudio/Resources/<KIT-ID>/; commit the WAVs.
 
 import AVFoundation
 import Foundation
@@ -71,6 +72,32 @@ func render(_ seconds: Double, _ sample: (Double, Int) -> Double) -> [Float] {
     var out = [Float](repeating: 0, count: n)
     for i in 0..<n { out[i] = Float(sample(Double(i) / SR, i)) }
     return out
+}
+
+// MARK: - Color tools (used by the style kits)
+
+func drive(_ x: Double, _ amount: Double) -> Double {
+    tanh(x * amount) / tanh(amount)
+}
+
+struct OnePoleLP {
+    var y = 0.0
+    let a: Double
+    init(cutoff: Double) { a = 1 - exp(-2 * .pi * cutoff / SR) }
+    mutating func process(_ x: Double) -> Double { y += a * (x - y); return y }
+}
+
+func bitcrush(_ x: Double, bits: Double) -> Double {
+    let q = pow(2, bits - 1)
+    return (x * q).rounded() / q
+}
+
+/// Lo-fi post chain: drive → bitcrush → lowpass, applied per sample.
+func dusty(_ samples: [Float], drive amount: Double, cutoff: Double, bits: Double) -> [Float] {
+    var lp = OnePoleLP(cutoff: cutoff)
+    return samples.map { s in
+        Float(lp.process(bitcrush(drive(Double(s), amount), bits: bits)))
+    }
 }
 
 // MARK: - Voices (mock parity)
@@ -162,6 +189,183 @@ func renderCow() -> [Float] {
     }
 }
 
+// MARK: - Nine-Oh (takt-2): 909-flavored, punchier and brighter
+
+func renderKick909() -> [Float] {
+    var phase = 0.0
+    var clickPhase = 0.0
+    return render(0.36) { t, _ in
+        let f = 210 * pow(52 / 210, min(t, 0.055) / 0.055)
+        phase += f / SR
+        clickPhase += 1200 / SR
+        let body = sin(2 * .pi * phase) * expEnv(t, peak: 1.05, dur: 0.32)
+        let click = square(clickPhase) * expEnv(t, peak: 0.5, dur: 0.004)
+        return drive(body + click, 1.3)
+    }
+}
+
+func renderSnare909() -> [Float] {
+    var noise = Noise(state: 0x0909_0001)
+    var hp = Biquad.highpass(700)
+    var p1 = 0.0, p2 = 0.0
+    return render(0.26) { t, _ in
+        let snap = hp.process(noise.next()) * expEnv(t, peak: 0.55, dur: 0.20)
+        p1 += 187 / SR; p2 += 330 / SR
+        let tone = (triangle(p1) * 0.28 + triangle(p2) * 0.18) * expEnv(t, peak: 1, dur: 0.09)
+        return snap + tone
+    }
+}
+
+func renderClap909() -> [Float] {
+    var noise = Noise(state: 0x0909_0002)
+    var bp = Biquad.bandpass(1400, q: 1.2)
+    func gain(_ t: Double) -> Double {
+        for i in 0..<4 {
+            let t0 = Double(i) * 0.009
+            if t >= t0 && t < t0 + 0.009 && t < 0.036 {
+                return expSeg(t - t0, from: 0.9, to: 0.3, dur: 0.008)
+            }
+        }
+        return t >= 0.036 ? expEnv(t - 0.036, peak: 0.65, dur: 0.16) : 0
+    }
+    return render(0.24) { t, _ in bp.process(noise.next()) * gain(t) }
+}
+
+func renderRim909() -> [Float] {
+    var noise = Noise(state: 0x0909_0003)
+    var hp = Biquad.highpass(2500)
+    var phase = 0.0
+    return render(0.05) { t, _ in
+        phase += 1750 / SR
+        return sin(2 * .pi * phase) * expEnv(t, peak: 0.4, dur: 0.02)
+            + hp.process(noise.next()) * expEnv(t, peak: 0.45, dur: 0.015)
+    }
+}
+
+func renderHat909(open: Bool) -> [Float] {
+    let freqs = [2.0, 3.0, 4.16, 5.43, 6.79, 8.21].map { 46 * $0 }
+    var phases = [Double](repeating: 0, count: freqs.count)
+    var bp = Biquad.bandpass(11500, q: 0.8)
+    var hp = Biquad.highpass(8200)
+    let dur = open ? 0.30 : 0.04
+    return render(open ? 0.45 : 0.09) { t, _ in
+        var s = 0.0
+        for (i, f) in freqs.enumerated() {
+            phases[i] += f / SR
+            s += square(phases[i])
+        }
+        return hp.process(bp.process(s)) * expEnv(t, peak: 0.5, dur: dur)
+    }
+}
+
+func renderTom909() -> [Float] {
+    var phase = 0.0
+    return render(0.34) { t, _ in
+        let f = 175 * pow(88 / 175, min(t, 0.12) / 0.12)
+        phase += f / SR
+        return sin(2 * .pi * phase) * expEnv(t, peak: 0.9, dur: 0.30)
+    }
+}
+
+func renderCow909() -> [Float] {
+    var p1 = 0.0, p2 = 0.0
+    var bp = Biquad.bandpass(1100, q: 2.0)
+    func gain(_ t: Double) -> Double {
+        t < 0.025
+            ? expSeg(t, from: 0.6, to: 0.18, dur: 0.025)
+            : expEnv(t - 0.025, peak: 0.18, dur: 0.20)
+    }
+    return render(0.24) { t, _ in
+        p1 += 660 / SR; p2 += 990 / SR
+        return bp.process(square(p1) + square(p2)) * gain(t)
+    }
+}
+
+// MARK: - Dust (takt-3): lo-fi boom-bap, driven / crushed / low-passed
+
+func renderKickDust() -> [Float] {
+    var phase = 0.0
+    let base = render(0.55) { t, _ in
+        let f = 105 * pow(38 / 105, min(t, 0.12) / 0.12)
+        phase += f / SR
+        return sin(2 * .pi * phase) * expEnv(t, peak: 1.0, dur: 0.50)
+    }
+    return dusty(base, drive: 2.2, cutoff: 3200, bits: 12)
+}
+
+func renderSnareDust() -> [Float] {
+    var noise = Noise(state: 0x00D_0001)
+    var bp = Biquad.bandpass(1350, q: 1.2)
+    var phase = 0.0
+    let base = render(0.20) { t, _ in
+        phase += 165 / SR
+        return bp.process(noise.next()) * expEnv(t, peak: 0.7, dur: 0.13)
+            + triangle(phase) * expEnv(t, peak: 0.4, dur: 0.07)
+    }
+    return dusty(base, drive: 1.8, cutoff: 5200, bits: 12)
+}
+
+func renderClapDust() -> [Float] {
+    var noise = Noise(state: 0x00D_0002)
+    var bp = Biquad.bandpass(950, q: 1.3)
+    func gain(_ t: Double) -> Double {
+        switch t {
+        case ..<0.014: expSeg(t, from: 0.85, to: 0.3, dur: 0.013)
+        case ..<0.028: expSeg(t - 0.014, from: 0.85, to: 0.3, dur: 0.013)
+        default: expEnv(t - 0.028, peak: 0.6, dur: 0.14)
+        }
+    }
+    let base = render(0.20) { t, _ in bp.process(noise.next()) * gain(t) }
+    return dusty(base, drive: 1.7, cutoff: 4800, bits: 12)
+}
+
+func renderRimDust() -> [Float] {
+    var noise = Noise(state: 0x00D_0003)
+    var hp = Biquad.highpass(2000)
+    var phase = 0.0
+    let base = render(0.08) { t, _ in
+        phase += 470 / SR
+        return sin(2 * .pi * phase) * expEnv(t, peak: 0.5, dur: 0.05)
+            + hp.process(noise.next()) * expEnv(t, peak: 0.3, dur: 0.02)
+    }
+    return dusty(base, drive: 1.5, cutoff: 5000, bits: 12)
+}
+
+func renderHatDust(open: Bool) -> [Float] {
+    var noise = Noise(state: open ? 0x00D_0005 : 0x00D_0004)
+    var hp = Biquad.highpass(open ? 4200 : 4800)
+    let dur = open ? 0.22 : 0.035
+    let base = render(open ? 0.30 : 0.07) { t, _ in
+        hp.process(noise.next()) * expEnv(t, peak: open ? 0.42 : 0.4, dur: dur)
+    }
+    return dusty(base, drive: 1.4, cutoff: open ? 8000 : 8500, bits: 11)
+}
+
+func renderTomDust() -> [Float] {
+    var phase = 0.0
+    let base = render(0.32) { t, _ in
+        let f = 130 * pow(62 / 130, min(t, 0.16) / 0.16)
+        phase += f / SR
+        return sin(2 * .pi * phase) * expEnv(t, peak: 0.85, dur: 0.28)
+    }
+    return dusty(base, drive: 1.8, cutoff: 3800, bits: 12)
+}
+
+func renderCowDust() -> [Float] {
+    var p1 = 0.0, p2 = 0.0
+    var bp = Biquad.bandpass(700, q: 2.0)
+    func gain(_ t: Double) -> Double {
+        t < 0.03
+            ? expSeg(t, from: 0.5, to: 0.15, dur: 0.03)
+            : expEnv(t - 0.03, peak: 0.15, dur: 0.17)
+    }
+    let base = render(0.22) { t, _ in
+        p1 += 395 / SR; p2 += 590 / SR
+        return bp.process(square(p1) + square(p2)) * gain(t)
+    }
+    return dusty(base, drive: 1.6, cutoff: 4200, bits: 12)
+}
+
 // MARK: - Output
 
 func writeWAV(_ samples: [Float], to url: URL) throws {
@@ -186,32 +390,42 @@ func writeWAV(_ samples: [Float], to url: URL) throws {
     try file.write(from: buf)
 }
 
-let renderers: [String: () -> [Float]] = [
-    "kick": renderKick,
-    "snare": renderSnare,
-    "clap": renderClap,
-    "rim": renderRim,
-    "chat": { renderHat(open: false) },
-    "ohat": { renderHat(open: true) },
-    "tom": renderTom,
-    "cow": renderCow,
+let kitRenderers: [(Kit, [String: () -> [Float]])] = [
+    (.takt1, [
+        "kick": renderKick, "snare": renderSnare, "clap": renderClap, "rim": renderRim,
+        "chat": { renderHat(open: false) }, "ohat": { renderHat(open: true) },
+        "tom": renderTom, "cow": renderCow,
+    ]),
+    (.takt2, [
+        "kick": renderKick909, "snare": renderSnare909, "clap": renderClap909,
+        "rim": renderRim909, "chat": { renderHat909(open: false) },
+        "ohat": { renderHat909(open: true) }, "tom": renderTom909, "cow": renderCow909,
+    ]),
+    (.takt3, [
+        "kick": renderKickDust, "snare": renderSnareDust, "clap": renderClapDust,
+        "rim": renderRimDust, "chat": { renderHatDust(open: false) },
+        "ohat": { renderHatDust(open: true) }, "tom": renderTomDust, "cow": renderCowDust,
+    ]),
 ]
 
-let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1
+let baseDir = URL(fileURLWithPath: CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
-    : "Sources/TaktAudio/Resources/TAKT-1")
-try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+    : "Sources/TaktAudio/Resources")
 
-for voice in Kit.takt1.voices {
-    guard let renderer = renderers[voice.id] else {
-        fatalError("no renderer for voice \(voice.id)")
+for (kit, renderers) in kitRenderers {
+    let outDir = baseDir.appendingPathComponent(kit.id.uppercased())
+    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+    for voice in kit.voices {
+        guard let renderer = renderers[voice.id] else {
+            fatalError("no renderer for voice \(voice.id) in \(kit.name)")
+        }
+        let samples = renderer()
+        let url = outDir.appendingPathComponent(voice.sampleFile)
+        try? FileManager.default.removeItem(at: url)
+        try writeWAV(samples, to: url)
+        let peak = samples.map(abs).max() ?? 0
+        let ms = Int(Double(samples.count) / SR * 1000)
+        print("\(kit.name)/\(voice.sampleFile): \(ms) ms, peak \(String(format: "%.3f", peak))")
     }
-    let samples = renderer()
-    let url = outDir.appendingPathComponent(voice.sampleFile)
-    try? FileManager.default.removeItem(at: url)
-    try writeWAV(samples, to: url)
-    let peak = samples.map(abs).max() ?? 0
-    let ms = Int(Double(samples.count) / SR * 1000)
-    print("\(voice.sampleFile): \(ms) ms, peak \(String(format: "%.3f", peak))")
 }
-print("kit TAKT-1 rendered to \(outDir.path)")
+print("kits rendered to \(baseDir.path)")

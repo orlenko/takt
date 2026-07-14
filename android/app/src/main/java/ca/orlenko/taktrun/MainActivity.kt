@@ -61,6 +61,7 @@ object UiState {
     val beatName = mutableStateOf(Takt.seeds.first().name)
     val message = mutableStateOf<String?>(null)
     val imported = mutableStateOf<Project?>(null)
+    val kitId = mutableStateOf("takt-1")
 }
 
 class MainActivity : ComponentActivity() {
@@ -122,7 +123,13 @@ fun selectProject(project: Project) {
     Engine.load(project)
     UiState.beatName.value = project.name
     UiState.tempo.value = project.tempoBPM.toInt()
+    UiState.kitId.value = project.kitId
     UiState.message.value = null
+}
+
+fun selectKit(id: String) {
+    Engine.kitId = id
+    UiState.kitId.value = id
 }
 
 fun setTempo(value: Int) {
@@ -197,7 +204,16 @@ fun RunScreen(onPickFile: () -> Unit, onPlayToggle: () -> Unit) {
             color = Candy.faint,
         )
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
+
+        val kitId by UiState.kitId
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Takt.kits.forEach { kit ->
+                KitChip(kit.name, active = kitId == kit.id) { selectKit(kit.id) }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Preset("EASY", 160, tempo)
@@ -245,6 +261,22 @@ private fun cycleBeat() {
     val options = Takt.seeds + listOfNotNull(UiState.imported.value)
     val current = options.indexOfFirst { it.name == UiState.beatName.value }
     selectProject(options[(current + 1).mod(options.size)])
+}
+
+@Composable
+private fun KitChip(label: String, active: Boolean, onTap: () -> Unit) {
+    Text(
+        label,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        color = if (active) Candy.text else Candy.dim,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (active) Candy.accent.copy(alpha = 0.12f) else Candy.raised)
+            .border(1.dp, if (active) Candy.accent else Candy.line, RoundedCornerShape(50))
+            .clickable { onTap() }
+            .padding(horizontal = 13.dp, vertical = 7.dp),
+    )
 }
 
 @Composable

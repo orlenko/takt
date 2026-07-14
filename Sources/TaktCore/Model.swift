@@ -40,6 +40,21 @@ public struct Kit: Codable, Equatable, Sendable {
 }
 
 public extension Kit {
+    /// All built-in kits share the same eight voice roles (ids, hues, GM
+    /// notes, choke groups); only the rendered samples differ. That keeps
+    /// patterns, colors, and MIDI export identical across styles.
+    static let all: [Kit] = [takt1, takt2, takt3]
+
+    static func kit(id: String) -> Kit? {
+        all.first { $0.id == id }
+    }
+
+    /// 909-flavored electronic kit.
+    static let takt2 = Kit(id: "takt-2", name: "Nine-Oh", voices: takt1.voices)
+
+    /// Lo-fi boom-bap kit: driven, crushed, low-passed.
+    static let takt3 = Kit(id: "takt-3", name: "Dust", voices: takt1.voices)
+
     /// The built-in synth-rendered kit. Samples live in TaktAudio resources.
     static let takt1 = Kit(id: "takt-1", name: "TAKT-1", voices: [
         Voice(id: "kick",  name: "Kick",       hueDegrees: 40,  sampleFile: "kick.wav",  gmNote: 36),

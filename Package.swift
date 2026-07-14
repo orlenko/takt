@@ -14,7 +14,11 @@ let package = Package(
         .target(
             name: "TaktAudio",
             dependencies: ["TaktCore"],
-            resources: [.copy("Resources/TAKT-1")],
+            resources: [
+                .copy("Resources/TAKT-1"),
+                .copy("Resources/TAKT-2"),
+                .copy("Resources/TAKT-3"),
+            ],
             swiftSettings: swiftSettings
         ),
         .target(

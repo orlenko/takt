@@ -2,6 +2,17 @@ import XCTest
 @testable import TaktCore
 
 final class ModelTests: XCTestCase {
+    func testKitRegistry() {
+        XCTAssertEqual(Kit.all.count, 3)
+        XCTAssertEqual(Set(Kit.all.map(\.id)).count, 3, "kit ids must be unique")
+        XCTAssertEqual(Kit.kit(id: "takt-2")?.name, "Nine-Oh")
+        XCTAssertNil(Kit.kit(id: "bogus"))
+        for kit in Kit.all {
+            XCTAssertEqual(kit.voices, Kit.takt1.voices,
+                           "\(kit.name): all kits must share the same voice roles")
+        }
+    }
+
     func testKitIntegrity() {
         let kit = Kit.takt1
         XCTAssertEqual(kit.voices.count, 8)
