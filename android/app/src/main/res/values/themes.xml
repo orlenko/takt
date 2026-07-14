@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.TaktRun" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#F9F5ED</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#F9F5ED</item>
+    </style>
+</resources>
