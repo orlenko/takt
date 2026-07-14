@@ -10,10 +10,15 @@ Goals: open → hear a groove in under 60 seconds; edit a 16-step pattern with
 velocity and swing; jam over it from QWERTY or a MIDI keyboard; export the loop
 as WAV or MIDI (including drag-out); never lose work.
 
+Shipped ahead of plan: pattern slots A–H with chaining (loop the whole chain
+in order, or just the slot being edited; `SequencerState.playOrder` already
+supports arbitrary orders like A-A-B for later).
+
 Non-goals in v1 (deferred, the model must not preclude them): 32-step UI,
-pattern chains, probability/ratchets, polymeter, user sample import, MIDI learn
-mode, MIDI clock sync, per-step automation, song mode. The model stays
-agnostic (`stepCount`, `midiOverrides`), the v1 UI does not.
+probability/ratchets, polymeter, user sample import, MIDI learn mode, MIDI
+clock sync, per-step automation, song mode with arbitrary chain orders. The
+model stays agnostic (`stepCount`, `midiOverrides`, `playOrder`), the v1 UI
+does not.
 
 ## Build system
 
