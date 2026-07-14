@@ -82,6 +82,9 @@ final class GridNSView: NSView {
         let theme = model.theme
         let pattern = model.project.currentPattern
         let now = Sequencer.hostSecondsNow()
+        // The playhead only belongs on the grid when the sounding slot is the
+        // one being shown.
+        let playheadStep = model.playingSlot == model.editingSlot ? model.displayedStep : nil
 
         theme.surface.setFill()
         bounds.fill()
@@ -94,7 +97,7 @@ final class GridNSView: NSView {
         // Step number row: beat numbers over downbeats, dots elsewhere.
         for step in 0..<Self.steps {
             let isBeat = step % 4 == 0
-            let isNow = model.displayedStep == step
+            let isNow = playheadStep == step
             let label = isBeat ? "\(step / 4 + 1)" : "·"
             let color = isNow ? theme.text : (isBeat ? theme.dim : theme.faint)
             NSAttributedString(string: label, attributes: numAttrs(color))
@@ -179,7 +182,7 @@ final class GridNSView: NSView {
                 }
 
                 // Playhead ring.
-                if model.displayedStep == step {
+                if playheadStep == step {
                     theme.ring.setStroke()
                     let ringPath = NSBezierPath(
                         roundedRect: rect.insetBy(dx: 0.75, dy: 0.75),

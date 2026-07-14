@@ -18,6 +18,12 @@ public final class AppModel: ObservableObject {
     @Published var engineError: String?
     @Published var midiSourceNames: [String] = []
     @Published var isExporting = false
+    /// Pattern slot currently sounding (nil when stopped).
+    @Published var playingSlot: Int?
+    /// true: loop the whole chain of slots in order; false: loop the editing slot.
+    @Published var loopChain = true
+
+    static let maxSlots = 8
     @Published var themeID: ThemeID {
         didSet {
             UserDefaults.standard.set(themeID.rawValue, forKey: "themeID")
@@ -46,7 +52,7 @@ public final class AppModel: ObservableObject {
     private var graph: DrumGraph?
     private var sequencer: Sequencer?
     private var midi: MIDIInput?
-    private var pendingSteps: [(step: Int, time: Double)] = []
+    private var pendingSteps: [(slot: Int, step: Int, time: Double)] = []
     private var displayTimer: Timer?
     private var keyMonitor: Any?
     private static let jamKeys = Array("asdfghjk")
@@ -99,6 +105,7 @@ public final class AppModel: ObservableObject {
         isPlaying = false
         pendingSteps.removeAll()
         displayedStep = nil
+        playingSlot = nil
         gridNeedsDisplay?()
     }
 
@@ -172,6 +179,64 @@ public final class AppModel: ObservableObject {
         gridNeedsDisplay?()
     }
 
+    // MARK: - Pattern slots
+
+    var editingSlot: Int { project.currentPatternIndex }
+
+    func selectSlot(_ index: Int) {
+        guard project.patterns.indices.contains(index) else { return }
+        project.currentPatternIndex = index
+        activeSeedName = nil
+        pushState() // play order changes in slot-loop mode
+        gridNeedsDisplay?()
+    }
+
+    /// Duplicates the current slot into a new slot right after it and
+    /// selects the copy: the "add another block like this one" gesture.
+    func duplicateSlot() {
+        guard project.patterns.count < Self.maxSlots else { return }
+        let copy = project.currentPattern
+        project.patterns.insert(copy, at: project.currentPatternIndex + 1)
+        project.currentPatternIndex += 1
+        pushState()
+        gridNeedsDisplay?()
+    }
+
+    /// Adds an empty slot at the end and selects it.
+    func addEmptySlot() {
+        guard project.patterns.count < Self.maxSlots else { return }
+        project.patterns.append(Pattern(kit: kit))
+        project.currentPatternIndex = project.patterns.count - 1
+        activeSeedName = nil
+        pushState()
+        gridNeedsDisplay?()
+    }
+
+    func deleteSlot(_ index: Int) {
+        guard project.patterns.count > 1,
+              project.patterns.indices.contains(index) else { return }
+        project.patterns.remove(at: index)
+        if project.currentPatternIndex >= project.patterns.count {
+            project.currentPatternIndex = project.patterns.count - 1
+        }
+        pushState()
+        gridNeedsDisplay?()
+    }
+
+    func setLoopChain(_ chain: Bool) {
+        loopChain = chain
+        pushState()
+    }
+
+    static func slotName(_ index: Int) -> String {
+        let letters = Array("ABCDEFGH")
+        return index < letters.count ? String(letters[index]) : "\(index + 1)"
+    }
+
+    private var playOrder: [Int] {
+        loopChain ? Array(project.patterns.indices) : [project.currentPatternIndex]
+    }
+
     // MARK: - Export
 
     /// WAV: fixed 4 loops + tail, for DAWs. M4A: `minutes` of seamless-ish
@@ -183,20 +248,23 @@ public final class AppModel: ObservableObject {
         panel.nameFieldStringValue = defaultExportName(format: format, minutes: minutes)
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let pattern = project.currentPattern
+        let patterns = project.patterns
+        let order = playOrder
         let tempo = project.tempoBPM
         let swing = project.swingPercent
         let kit = kit
-        let loopDuration = Timing.loopDuration(stepCount: pattern.stepCount, tempoBPM: tempo)
-        let loops = minutes.map { max(1, Int(($0 * 60 / loopDuration).rounded(.up))) } ?? 4
+        let chainDuration = order.reduce(0.0) { acc, i in
+            acc + Timing.loopDuration(stepCount: patterns[i].stepCount, tempoBPM: tempo)
+        }
+        let cycles = minutes.map { max(1, Int(($0 * 60 / chainDuration).rounded(.up))) } ?? 4
         let tail = format == .wav ? 0.5 : 0.0
 
         isExporting = true
         Task { @MainActor [weak self] in
             do {
-                try await Task.detached(priority: .userInitiated) {
-                    try Bounce.render(pattern: pattern, kit: kit, tempoBPM: tempo,
-                                      swingPercent: swing, loops: loops,
+                _ = try await Task.detached(priority: .userInitiated) {
+                    try Bounce.render(patterns: patterns, playOrder: order, kit: kit,
+                                      tempoBPM: tempo, swingPercent: swing, cycles: cycles,
                                       tailSeconds: tail, to: url, format: format)
                 }.value
                 self?.isExporting = false
@@ -273,7 +341,8 @@ public final class AppModel: ObservableObject {
     // MARK: - Engine plumbing
 
     private func currentState() -> SequencerState {
-        SequencerState(pattern: project.currentPattern,
+        SequencerState(patterns: project.patterns,
+                       playOrder: playOrder,
                        tempoBPM: project.tempoBPM,
                        swingPercent: project.swingPercent)
     }
@@ -290,9 +359,9 @@ public final class AppModel: ObservableObject {
         try engine.start()
         graph.startPlayers()
         let sequencer = Sequencer(graph: graph, kit: kit, state: currentState())
-        sequencer.onStep = { [weak self] step, time in
+        sequencer.onStep = { [weak self] slot, step, time in
             DispatchQueue.main.async {
-                self?.pendingSteps.append((step, time))
+                self?.pendingSteps.append((slot, step, time))
             }
         }
         self.engine = engine
@@ -315,16 +384,21 @@ public final class AppModel: ObservableObject {
     private func displayTick() {
         let now = Sequencer.hostSecondsNow()
         var newStep: Int?
+        var newSlot: Int?
         while let first = pendingSteps.first, first.time <= now {
             newStep = first.step
+            newSlot = first.slot
             pendingSteps.removeFirst()
-            if now - first.time < 0.08 {
-                let pattern = project.currentPattern
+            if now - first.time < 0.08, project.patterns.indices.contains(first.slot) {
+                let pattern = project.patterns[first.slot]
                 for (i, track) in pattern.tracks.enumerated()
                 where track.steps.indices.contains(first.step)
                     && track.steps[first.step].isOn
                     && pattern.isAudible(trackIndex: i) {
-                    cellFlashes[FlashKey(track: i, step: first.step)] = first.time
+                    // Cell flashes only make sense on the pattern being shown.
+                    if first.slot == editingSlot {
+                        cellFlashes[FlashKey(track: i, step: first.step)] = first.time
+                    }
                     dotFlashes[i] = first.time
                 }
             }
@@ -333,6 +407,10 @@ public final class AppModel: ObservableObject {
         dotFlashes = dotFlashes.filter { now - $0.value < Self.flashDuration }
 
         var dirty = false
+        if let newSlot, newSlot != playingSlot {
+            playingSlot = newSlot
+            dirty = true
+        }
         if let newStep, newStep != displayedStep {
             displayedStep = newStep
             dirty = true

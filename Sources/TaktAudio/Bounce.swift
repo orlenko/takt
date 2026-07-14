@@ -37,11 +37,27 @@ public enum AudioExportFormat: String, CaseIterable, Sendable {
 public enum Bounce {
     public static let sampleRate = 48000.0
 
+    /// Single-pattern convenience: `loops` repeats of one pattern.
     @discardableResult
     public static func render(pattern: TaktCore.Pattern, kit: Kit, tempoBPM: Double,
                               swingPercent: Double, loops: Int = 1,
                               tailSeconds: Double = 0.5, to url: URL,
                               format: AudioExportFormat = .wav) throws -> Double {
+        try render(patterns: [pattern], playOrder: [0], kit: kit, tempoBPM: tempoBPM,
+                   swingPercent: swingPercent, cycles: loops, tailSeconds: tailSeconds,
+                   to: url, format: format)
+    }
+
+    /// Renders `cycles` passes of the chain (`playOrder` indices into
+    /// `patterns`), matching live playback exactly.
+    @discardableResult
+    public static func render(patterns: [TaktCore.Pattern], playOrder: [Int], kit: Kit,
+                              tempoBPM: Double, swingPercent: Double, cycles: Int = 1,
+                              tailSeconds: Double = 0.5, to url: URL,
+                              format: AudioExportFormat = .wav) throws -> Double {
+        let order = playOrder.filter { patterns.indices.contains($0) }
+        guard !order.isEmpty else { throw TaktAudioError.renderFailed("empty chain") }
+
         let engine = AVAudioEngine()
         let buffers = try KitBuffers(kit: kit)
         let graph = DrumGraph(engine: engine, buffers: buffers)
@@ -55,27 +71,31 @@ public enum Bounce {
 
         // In manual rendering mode the player timeline starts at render
         // sample 0, so hits are scheduled directly at sample positions.
-        let loopDur = Timing.loopDuration(stepCount: pattern.stepCount, tempoBPM: tempoBPM)
-        for loop in 0..<max(1, loops) {
-            for step in 0..<pattern.stepCount {
-                for (i, track) in pattern.tracks.enumerated() {
-                    guard track.steps.indices.contains(step) else { continue }
-                    let hit = track.steps[step]
-                    guard hit.isOn, pattern.isAudible(trackIndex: i) else { continue }
-                    let t = Double(loop) * loopDur
-                        + Timing.stepTime(step: step, tempoBPM: tempoBPM, swingPercent: swingPercent)
-                    let choke = ChokeMath.limit(kit: kit, pattern: pattern, trackIndex: i,
-                                                step: step, tempoBPM: tempoBPM,
-                                                swingPercent: swingPercent)
-                    let time = AVAudioTime(sampleTime: AVAudioFramePosition(t * sampleRate),
-                                           atRate: sampleRate)
-                    graph.trigger(voiceID: track.voiceID, gain: hit.gain * track.level,
-                                  at: time, maxDuration: choke)
+        var origin = 0.0
+        for _ in 0..<max(1, cycles) {
+            for patternIndex in order {
+                let pattern = patterns[patternIndex]
+                for step in 0..<pattern.stepCount {
+                    for (i, track) in pattern.tracks.enumerated() {
+                        guard track.steps.indices.contains(step) else { continue }
+                        let hit = track.steps[step]
+                        guard hit.isOn, pattern.isAudible(trackIndex: i) else { continue }
+                        let t = origin + Timing.stepTime(step: step, tempoBPM: tempoBPM,
+                                                         swingPercent: swingPercent)
+                        let choke = ChokeMath.limit(kit: kit, pattern: pattern, trackIndex: i,
+                                                    step: step, tempoBPM: tempoBPM,
+                                                    swingPercent: swingPercent)
+                        let time = AVAudioTime(sampleTime: AVAudioFramePosition(t * sampleRate),
+                                               atRate: sampleRate)
+                        graph.trigger(voiceID: track.voiceID, gain: hit.gain * track.level,
+                                      at: time, maxDuration: choke)
+                    }
                 }
+                origin += Timing.loopDuration(stepCount: pattern.stepCount, tempoBPM: tempoBPM)
             }
         }
 
-        let totalSeconds = Double(max(1, loops)) * loopDur + tailSeconds
+        let totalSeconds = origin + tailSeconds
         let totalFrames = AVAudioFramePosition(totalSeconds * sampleRate)
 
         try? FileManager.default.removeItem(at: url)

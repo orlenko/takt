@@ -47,6 +47,33 @@ final class BounceTests: XCTestCase {
         XCTAssertGreaterThan(try rms(of: url, fromSecond: 0, toSecond: 0.05), 0.05)
     }
 
+    func testChainRendersSlotsInOrder() throws {
+        // Slot A: lone kick at step 0. Slot B: lone snare at step 0.
+        // Chain A→B at 120 BPM: kick energy at 0 s, silence late in A,
+        // snare energy at 2 s.
+        let kit = Kit.takt1
+        var a = Pattern(kit: kit)
+        a.tracks[0].steps[0] = Step(velocity: 127) // kick
+        var b = Pattern(kit: kit)
+        b.tracks[1].steps[0] = Step(velocity: 127) // snare
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("takt-chain-test-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let seconds = try Bounce.render(patterns: [a, b], playOrder: [0, 1], kit: kit,
+                                        tempoBPM: 120, swingPercent: 50,
+                                        cycles: 1, tailSeconds: 0.2, to: url)
+        XCTAssertEqual(seconds, 4.2, accuracy: 1e-9) // two 2 s loops + tail
+
+        XCTAssertGreaterThan(try rms(of: url, fromSecond: 0.0, toSecond: 0.2), 0.05,
+                             "kick must open slot A")
+        XCTAssertLessThan(try rms(of: url, fromSecond: 1.2, toSecond: 1.9), 0.001,
+                          "late slot A must be silent")
+        XCTAssertGreaterThan(try rms(of: url, fromSecond: 2.0, toSecond: 2.2), 0.02,
+                             "snare must open slot B")
+    }
+
     func testM4AExportRendersReadableAudio() throws {
         let seed = Seeds.techno
         let url = FileManager.default.temporaryDirectory

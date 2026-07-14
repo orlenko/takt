@@ -5,15 +5,26 @@ import TaktCore
 /// The immutable snapshot the scheduler queue owns. UI edits send a fresh
 /// value copy; the scheduler never reads shared mutable state (SPEC.md
 /// concurrency contract).
+///
+/// `playOrder` is the looped chain of pattern indices: `[0]` loops slot A,
+/// `[0, 1]` alternates A → B, `[0, 0, 1]` plays A twice then B.
 public struct SequencerState: Sendable {
-    public var pattern: TaktCore.Pattern
+    public var patterns: [TaktCore.Pattern]
+    public var playOrder: [Int]
     public var tempoBPM: Double
     public var swingPercent: Double
 
-    public init(pattern: TaktCore.Pattern, tempoBPM: Double, swingPercent: Double) {
-        self.pattern = pattern
+    public init(patterns: [TaktCore.Pattern], playOrder: [Int],
+                tempoBPM: Double, swingPercent: Double) {
+        self.patterns = patterns
+        self.playOrder = playOrder.isEmpty ? [0] : playOrder
         self.tempoBPM = tempoBPM
         self.swingPercent = swingPercent
+    }
+
+    public init(pattern: TaktCore.Pattern, tempoBPM: Double, swingPercent: Double) {
+        self.init(patterns: [pattern], playOrder: [0],
+                  tempoBPM: tempoBPM, swingPercent: swingPercent)
     }
 }
 
@@ -30,11 +41,12 @@ public final class Sequencer {
     private var state: SequencerState
     private var timer: DispatchSourceTimer?
     private var stepIndex = 0
+    private var orderPos = 0
     private var nextTime: Double = 0 // host-clock seconds
 
-    /// Called on the sequencer queue for every scheduled step, with the
-    /// host-clock second at which that step will sound. Hop to main for UI.
-    public var onStep: (@Sendable (Int, Double) -> Void)?
+    /// Called on the sequencer queue for every scheduled step with
+    /// (patternIndex, step, hostSeconds when it sounds). Hop to main for UI.
+    public var onStep: (@Sendable (Int, Int, Double) -> Void)?
 
     public private(set) var isPlaying = false
 
@@ -60,6 +72,7 @@ public final class Sequencer {
         isPlaying = true
         queue.async {
             self.stepIndex = 0
+            self.orderPos = 0
             self.nextTime = Self.hostSecondsNow() + 0.06
             self.scheduleWindow()
         }
@@ -83,14 +96,27 @@ public final class Sequencer {
         let horizon = Self.hostSecondsNow() + Self.lookaheadSeconds
         while nextTime < horizon {
             let s = state
-            let step = stepIndex
-            guard s.pattern.stepCount > 0 else { return }
+            guard !s.patterns.isEmpty, !s.playOrder.isEmpty else { return }
 
-            for (i, track) in s.pattern.tracks.enumerated() {
+            // A fresh snapshot may have fewer patterns or a shorter chain;
+            // re-clamp our position instead of trusting stale indices.
+            if orderPos >= s.playOrder.count { orderPos = 0 }
+            let patternIndex = s.patterns.indices.contains(s.playOrder[orderPos])
+                ? s.playOrder[orderPos] : 0
+            let pattern = s.patterns[patternIndex]
+            guard pattern.stepCount > 0 else { return }
+            if stepIndex >= pattern.stepCount {
+                stepIndex = 0
+                orderPos = (orderPos + 1) % s.playOrder.count
+                continue
+            }
+            let step = stepIndex
+
+            for (i, track) in pattern.tracks.enumerated() {
                 guard track.steps.indices.contains(step) else { continue }
                 let hit = track.steps[step]
-                guard hit.isOn, s.pattern.isAudible(trackIndex: i) else { continue }
-                let choke = ChokeMath.limit(kit: kit, pattern: s.pattern, trackIndex: i,
+                guard hit.isOn, pattern.isAudible(trackIndex: i) else { continue }
+                let choke = ChokeMath.limit(kit: kit, pattern: pattern, trackIndex: i,
                                             step: step, tempoBPM: s.tempoBPM,
                                             swingPercent: s.swingPercent)
                 let time = AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: nextTime))
@@ -98,10 +124,14 @@ public final class Sequencer {
                               at: time, maxDuration: choke)
             }
 
-            onStep?(step, nextTime)
+            onStep?(patternIndex, step, nextTime)
             nextTime += Timing.stepDuration(step: step, tempoBPM: s.tempoBPM,
                                             swingPercent: s.swingPercent)
-            stepIndex = (step + 1) % s.pattern.stepCount
+            stepIndex += 1
+            if stepIndex >= pattern.stepCount {
+                stepIndex = 0
+                orderPos = (orderPos + 1) % s.playOrder.count
+            }
         }
     }
 }

@@ -13,6 +13,8 @@ public struct ContentView: View {
         VStack(spacing: 0) {
             TransportView(model: model)
             Rectangle().fill(theme.line.swiftUI).frame(height: 1)
+            PatternBarView(model: model)
+            Rectangle().fill(theme.line.swiftUI).frame(height: 1)
             GridView(model: model)
                 .frame(minWidth: 1060, idealWidth: 1100,
                        minHeight: GridNSView.preferredHeight,
@@ -175,6 +177,78 @@ struct ChipStyle: ButtonStyle {
             .overlay(Capsule().stroke((active ? theme.accent : theme.line).swiftUI, lineWidth: 1))
             .clipShape(Capsule())
             .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+// MARK: - Pattern bar
+
+/// Slot chips (A, B, C…), duplicate/add, and the loop mode toggle. The chain
+/// plays every slot in order; slot mode loops only the one being edited.
+struct PatternBarView: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let theme = model.theme
+        HStack(spacing: 8) {
+            Text("PATTERN")
+                .font(.system(size: 9, design: .monospaced).weight(.medium))
+                .kerning(1.2)
+                .foregroundStyle(theme.faint.swiftUI)
+            ForEach(model.project.patterns.indices, id: \.self) { index in
+                slotChip(index)
+            }
+            if model.project.patterns.count < AppModel.maxSlots {
+                Button("⧉") { model.duplicateSlot() }
+                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .help("Duplicate this slot into a new one")
+                Button("+") { model.addEmptySlot() }
+                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .help("Add an empty slot")
+            }
+            Spacer()
+            Text("LOOP")
+                .font(.system(size: 9, design: .monospaced).weight(.medium))
+                .kerning(1.2)
+                .foregroundStyle(theme.faint.swiftUI)
+            Button("chain") { model.setLoopChain(true) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopChain))
+                .help("Loop every slot in order")
+            Button("slot") { model.setLoopChain(false) }
+                .buttonStyle(ChipStyle(theme: theme, active: !model.loopChain))
+                .help("Loop only the slot being edited")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 9)
+        .background(theme.raised.swiftUI)
+    }
+
+    private func slotChip(_ index: Int) -> some View {
+        let theme = model.theme
+        let playing = model.playingSlot == index && model.isPlaying
+        return Button {
+            model.selectSlot(index)
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(theme.accent.swiftUI)
+                    .frame(width: 5, height: 5)
+                    .opacity(playing ? 1 : 0)
+                Text(AppModel.slotName(index))
+            }
+        }
+        .buttonStyle(ChipStyle(theme: theme, active: model.editingSlot == index))
+        .contextMenu {
+            Button("Duplicate") {
+                model.selectSlot(index)
+                model.duplicateSlot()
+            }
+            Button("Clear") {
+                model.selectSlot(index)
+                model.clearPattern()
+            }
+            Button("Delete", role: .destructive) { model.deleteSlot(index) }
+                .disabled(model.project.patterns.count <= 1)
+        }
     }
 }
 
