@@ -282,17 +282,21 @@ struct StatusBarView: View {
                     .font(.system(size: 9, design: .monospaced).weight(.medium))
                     .kerning(1.2)
                     .foregroundStyle(theme.faint.swiftUI)
-                Button("wav") { model.exportAudio(format: .wav) }
+                Button("midi") { model.exportMIDI() }
                     .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
                     .disabled(model.isExporting)
                 Menu {
+                    Button("1 pass") { model.exportAudio(format: .wav, cycles: 1) }
+                    Button("2 passes") { model.exportAudio(format: .wav, cycles: 2) }
+                    Button("4 passes") { model.exportAudio(format: .wav, cycles: 4) }
+                    Divider()
                     ForEach([5, 10, 20, 30], id: \.self) { minutes in
-                        Button("\(minutes) minutes of loop") {
+                        Button("m4a jog mix · \(minutes) min") {
                             model.exportAudio(format: .m4a, minutes: Double(minutes))
                         }
                     }
                 } label: {
-                    Text(model.isExporting ? "rendering…" : "m4a")
+                    Text(model.isExporting ? "rendering…" : "wav")
                         .font(.system(size: 11, design: .monospaced))
                         .kerning(0.6)
                         .foregroundStyle(theme.dim.swiftUI)

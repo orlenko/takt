@@ -13,6 +13,16 @@ struct TaktApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(replacing: .saveItem) {
+                Button("Save As…") { model.saveProjectAs() }
+                    .keyboardShortcut("s", modifiers: .command)
+            }
+            CommandGroup(replacing: .newItem) {
+                Button("Open…") { model.openProject() }
+                    .keyboardShortcut("o", modifiers: .command)
+            }
+        }
     }
 }
 

@@ -239,13 +239,13 @@ public final class AppModel: ObservableObject {
 
     // MARK: - Export
 
-    /// WAV: fixed 4 loops + tail, for DAWs. M4A: `minutes` of seamless-ish
+    /// WAV: `cycles` passes of the chain + tail, for DAWs. M4A: `minutes` of
     /// looped beat (no tail), for phones and jogging playlists.
-    func exportAudio(format: AudioExportFormat, minutes: Double? = nil) {
+    func exportAudio(format: AudioExportFormat, minutes: Double? = nil, cycles cyclesOverride: Int? = nil) {
         guard !isExporting else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [format == .wav ? .wav : .mpeg4Audio]
-        panel.nameFieldStringValue = defaultExportName(format: format, minutes: minutes)
+        panel.nameFieldStringValue = defaultExportName(ext: format.fileExtension, minutes: minutes)
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         let patterns = project.patterns
@@ -256,7 +256,9 @@ public final class AppModel: ObservableObject {
         let chainDuration = order.reduce(0.0) { acc, i in
             acc + Timing.loopDuration(stepCount: patterns[i].stepCount, tempoBPM: tempo)
         }
-        let cycles = minutes.map { max(1, Int(($0 * 60 / chainDuration).rounded(.up))) } ?? 4
+        let cycles = cyclesOverride
+            ?? minutes.map { max(1, Int(($0 * 60 / chainDuration).rounded(.up))) }
+            ?? 1
         let tail = format == .wav ? 0.5 : 0.0
 
         isExporting = true
@@ -276,12 +278,69 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    private func defaultExportName(format: AudioExportFormat, minutes: Double?) -> String {
+    private func defaultExportName(ext: String, minutes: Double? = nil) -> String {
         let base = (activeSeedName ?? project.currentPattern.name)
             .lowercased().replacingOccurrences(of: " ", with: "-")
         let bpm = Int(project.tempoBPM.rounded())
         let suffix = minutes.map { "-\(Int($0))min" } ?? ""
-        return "takt-\(base)-\(bpm)bpm\(suffix).\(format.fileExtension)"
+        return "takt-\(base)-\(bpm)bpm\(suffix).\(ext)"
+    }
+
+    /// Standard MIDI File of one chain pass, following the loop mode.
+    func exportMIDI() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.midi]
+        panel.nameFieldStringValue = defaultExportName(ext: "mid")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let data = MIDIFile.data(patterns: project.patterns, playOrder: playOrder,
+                                 kit: kit, tempoBPM: project.tempoBPM,
+                                 swingPercent: project.swingPercent)
+        do {
+            try data.write(to: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            engineError = "\(error)"
+        }
+    }
+
+    // MARK: - Documents (.takt)
+
+    private static let taktType = UTType(filenameExtension: "takt", conformingTo: .json) ?? .json
+
+    public func saveProjectAs() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [Self.taktType]
+        panel.allowsOtherFileTypes = false
+        panel.nameFieldStringValue = defaultExportName(ext: "takt")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(project).write(to: url, options: .atomic)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            engineError = "\(error)"
+        }
+    }
+
+    public func openProject() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [Self.taktType]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let loaded = try JSONDecoder().decode(Project.self, from: Data(contentsOf: url))
+            guard !loaded.patterns.isEmpty else { throw TaktAudioError.renderFailed("empty project") }
+            stop()
+            project = loaded
+            project.currentPatternIndex = min(project.currentPatternIndex,
+                                              project.patterns.count - 1)
+            activeSeedName = nil
+            pushState()
+            gridNeedsDisplay?()
+        } catch {
+            engineError = "could not open: \(error)"
+        }
     }
 
     // MARK: - MIDI
