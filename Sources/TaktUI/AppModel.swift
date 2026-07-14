@@ -5,6 +5,7 @@ import SwiftUI
 import TaktAudio
 import TaktCore
 import TaktMIDI
+import UniformTypeIdentifiers
 
 @MainActor
 public final class AppModel: ObservableObject {
@@ -16,6 +17,7 @@ public final class AppModel: ObservableObject {
     @Published var activeSeedName: String?
     @Published var engineError: String?
     @Published var midiSourceNames: [String] = []
+    @Published var isExporting = false
     @Published var themeID: ThemeID {
         didSet {
             UserDefaults.standard.set(themeID.rawValue, forKey: "themeID")
@@ -168,6 +170,50 @@ public final class AppModel: ObservableObject {
         activeSeedName = nil
         pushState()
         gridNeedsDisplay?()
+    }
+
+    // MARK: - Export
+
+    /// WAV: fixed 4 loops + tail, for DAWs. M4A: `minutes` of seamless-ish
+    /// looped beat (no tail), for phones and jogging playlists.
+    func exportAudio(format: AudioExportFormat, minutes: Double? = nil) {
+        guard !isExporting else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format == .wav ? .wav : .mpeg4Audio]
+        panel.nameFieldStringValue = defaultExportName(format: format, minutes: minutes)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let pattern = project.currentPattern
+        let tempo = project.tempoBPM
+        let swing = project.swingPercent
+        let kit = kit
+        let loopDuration = Timing.loopDuration(stepCount: pattern.stepCount, tempoBPM: tempo)
+        let loops = minutes.map { max(1, Int(($0 * 60 / loopDuration).rounded(.up))) } ?? 4
+        let tail = format == .wav ? 0.5 : 0.0
+
+        isExporting = true
+        Task { @MainActor [weak self] in
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try Bounce.render(pattern: pattern, kit: kit, tempoBPM: tempo,
+                                      swingPercent: swing, loops: loops,
+                                      tailSeconds: tail, to: url, format: format)
+                }.value
+                self?.isExporting = false
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                self?.isExporting = false
+                self?.engineError = "\(error)"
+            }
+        }
+    }
+
+    private func defaultExportName(format: AudioExportFormat, minutes: Double?) -> String {
+        let base = (activeSeedName ?? project.currentPattern.name)
+            .lowercased().replacingOccurrences(of: " ", with: "-")
+        let bpm = Int(project.tempoBPM.rounded())
+        let suffix = minutes.map { "-\(Int($0))min" } ?? ""
+        return "takt-\(base)-\(bpm)bpm\(suffix).\(format.fileExtension)"
     }
 
     // MARK: - MIDI

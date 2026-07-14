@@ -204,6 +204,36 @@ struct StatusBarView: View {
             }
             Spacer()
             HStack(spacing: 6) {
+                Text("EXPORT")
+                    .font(.system(size: 9, design: .monospaced).weight(.medium))
+                    .kerning(1.2)
+                    .foregroundStyle(theme.faint.swiftUI)
+                Button("wav") { model.exportAudio(format: .wav) }
+                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .disabled(model.isExporting)
+                Menu {
+                    ForEach([5, 10, 20, 30], id: \.self) { minutes in
+                        Button("\(minutes) minutes of loop") {
+                            model.exportAudio(format: .m4a, minutes: Double(minutes))
+                        }
+                    }
+                } label: {
+                    Text(model.isExporting ? "rendering…" : "m4a")
+                        .font(.system(size: 11, design: .monospaced))
+                        .kerning(0.6)
+                        .foregroundStyle(theme.dim.swiftUI)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(theme.surface.swiftUI)
+                .overlay(Capsule().stroke(theme.line.swiftUI, lineWidth: 1))
+                .clipShape(Capsule())
+                .disabled(model.isExporting)
+            }
+            Rectangle().fill(theme.line.swiftUI).frame(width: 1, height: 16)
+            HStack(spacing: 6) {
                 ForEach(ThemeID.allCases) { id in
                     Button(id.label) { model.themeID = id }
                         .buttonStyle(ChipStyle(theme: theme, active: model.themeID == id))

@@ -1,16 +1,47 @@
 import AVFoundation
 import TaktCore
 
-/// Offline render of a pattern to a WAV file, using the same graph and the
-/// same timing/choke math as live playback. Serves WAV export and the
-/// engine's own smoke test.
+/// Audio export container formats. WAV for DAWs; M4A (AAC) for phones and
+/// long jogging mixes. Apple ships no MP3 encoder; AAC is the native
+/// equivalent and plays everywhere Android does.
+public enum AudioExportFormat: String, CaseIterable, Sendable {
+    case wav
+    case m4a
+
+    public var fileExtension: String { rawValue }
+
+    var fileSettings: [String: Any] {
+        switch self {
+        case .wav: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: Bounce.sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+        case .m4a: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: Bounce.sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVEncoderBitRateKey: 192_000,
+        ]
+        }
+    }
+}
+
+/// Offline render of a pattern to an audio file, using the same graph and the
+/// same timing/choke math as live playback. Serves export and the engine's
+/// own smoke test.
 public enum Bounce {
     public static let sampleRate = 48000.0
 
     @discardableResult
     public static func render(pattern: TaktCore.Pattern, kit: Kit, tempoBPM: Double,
                               swingPercent: Double, loops: Int = 1,
-                              tailSeconds: Double = 0.5, to url: URL) throws -> Double {
+                              tailSeconds: Double = 0.5, to url: URL,
+                              format: AudioExportFormat = .wav) throws -> Double {
         let engine = AVAudioEngine()
         let buffers = try KitBuffers(kit: kit)
         let graph = DrumGraph(engine: engine, buffers: buffers)
@@ -47,17 +78,8 @@ public enum Bounce {
         let totalSeconds = Double(max(1, loops)) * loopDur + tailSeconds
         let totalFrames = AVAudioFramePosition(totalSeconds * sampleRate)
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: 2,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false,
-        ]
         try? FileManager.default.removeItem(at: url)
-        let file = try AVAudioFile(forWriting: url, settings: settings,
+        let file = try AVAudioFile(forWriting: url, settings: format.fileSettings,
                                    commonFormat: .pcmFormatFloat32, interleaved: false)
         guard let buf = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat,
                                          frameCapacity: engine.manualRenderingMaximumFrameCount) else {

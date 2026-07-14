@@ -47,6 +47,25 @@ final class BounceTests: XCTestCase {
         XCTAssertGreaterThan(try rms(of: url, fromSecond: 0, toSecond: 0.05), 0.05)
     }
 
+    func testM4AExportRendersReadableAudio() throws {
+        let seed = Seeds.techno
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("takt-m4a-test-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let seconds = try Bounce.render(pattern: seed.pattern(kit: .takt1), kit: .takt1,
+                                        tempoBPM: seed.tempoBPM,
+                                        swingPercent: seed.swingPercent,
+                                        loops: 2, tailSeconds: 0, to: url, format: .m4a)
+
+        let file = try AVAudioFile(forReading: url)
+        let decodedSeconds = Double(file.length) / file.processingFormat.sampleRate
+        // AAC adds priming/remainder frames; a quarter second of tolerance
+        // is far beyond what the encoder pads.
+        XCTAssertEqual(decodedSeconds, seconds, accuracy: 0.25)
+        XCTAssertGreaterThan(try rms(of: url), 0.02)
+    }
+
     func testChokeShortensOpenHat() throws {
         // Pattern A: lone open hat on step 0. Pattern B: same, plus a closed
         // hat on step 2. The open-hat tail energy after the closed hat must
