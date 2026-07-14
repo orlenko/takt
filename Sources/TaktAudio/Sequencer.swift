@@ -1,0 +1,107 @@
+import AVFoundation
+import Darwin
+import TaktCore
+
+/// The immutable snapshot the scheduler queue owns. UI edits send a fresh
+/// value copy; the scheduler never reads shared mutable state (SPEC.md
+/// concurrency contract).
+public struct SequencerState: Sendable {
+    public var pattern: TaktCore.Pattern
+    public var tempoBPM: Double
+    public var swingPercent: Double
+
+    public init(pattern: TaktCore.Pattern, tempoBPM: Double, swingPercent: Double) {
+        self.pattern = pattern
+        self.tempoBPM = tempoBPM
+        self.swingPercent = swingPercent
+    }
+}
+
+/// Lookahead sequencer: a 25 ms timer on a serial queue schedules every hit
+/// inside the next 120 ms window, anchored to host time. The same model as
+/// the design mock's Web Audio scheduler.
+public final class Sequencer {
+    public static let lookaheadSeconds = 0.12
+    private static let timerInterval = DispatchTimeInterval.milliseconds(25)
+
+    private let queue = DispatchQueue(label: "takt.sequencer", qos: .userInteractive)
+    private let graph: DrumGraph
+    private let kit: Kit
+    private var state: SequencerState
+    private var timer: DispatchSourceTimer?
+    private var stepIndex = 0
+    private var nextTime: Double = 0 // host-clock seconds
+
+    /// Called on the sequencer queue for every scheduled step, with the
+    /// host-clock second at which that step will sound. Hop to main for UI.
+    public var onStep: (@Sendable (Int, Double) -> Void)?
+
+    public private(set) var isPlaying = false
+
+    public init(graph: DrumGraph, kit: Kit, state: SequencerState) {
+        self.graph = graph
+        self.kit = kit
+        self.state = state
+    }
+
+    deinit { timer?.cancel() }
+
+    public static func hostSecondsNow() -> Double {
+        AVAudioTime.seconds(forHostTime: mach_absolute_time())
+    }
+
+    /// Push a fresh snapshot; picked up within the scheduling horizon.
+    public func update(_ newState: SequencerState) {
+        queue.async { self.state = newState }
+    }
+
+    public func start() {
+        guard !isPlaying else { return }
+        isPlaying = true
+        queue.async {
+            self.stepIndex = 0
+            self.nextTime = Self.hostSecondsNow() + 0.06
+            self.scheduleWindow()
+        }
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + Self.timerInterval, repeating: Self.timerInterval,
+                   leeway: .milliseconds(5))
+        t.setEventHandler { [weak self] in self?.scheduleWindow() }
+        t.resume()
+        timer = t
+    }
+
+    public func stop() {
+        guard isPlaying else { return }
+        isPlaying = false
+        timer?.cancel()
+        timer = nil
+        graph.reset() // kill ringing tails and not-yet-sounded scheduled hits
+    }
+
+    private func scheduleWindow() {
+        let horizon = Self.hostSecondsNow() + Self.lookaheadSeconds
+        while nextTime < horizon {
+            let s = state
+            let step = stepIndex
+            guard s.pattern.stepCount > 0 else { return }
+
+            for (i, track) in s.pattern.tracks.enumerated() {
+                guard track.steps.indices.contains(step) else { continue }
+                let hit = track.steps[step]
+                guard hit.isOn, s.pattern.isAudible(trackIndex: i) else { continue }
+                let choke = ChokeMath.limit(kit: kit, pattern: s.pattern, trackIndex: i,
+                                            step: step, tempoBPM: s.tempoBPM,
+                                            swingPercent: s.swingPercent)
+                let time = AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: nextTime))
+                graph.trigger(voiceID: track.voiceID, gain: hit.gain * track.level,
+                              at: time, maxDuration: choke)
+            }
+
+            onStep?(step, nextTime)
+            nextTime += Timing.stepDuration(step: step, tempoBPM: s.tempoBPM,
+                                            swingPercent: s.swingPercent)
+            stepIndex = (step + 1) % s.pattern.stepCount
+        }
+    }
+}
