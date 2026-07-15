@@ -19,8 +19,18 @@ struct TaktApp: App {
                     .keyboardShortcut("s", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
+                Button("New") { model.newProject() }
+                    .keyboardShortcut("n", modifiers: .command)
                 Button("Open…") { model.openProject() }
                     .keyboardShortcut("o", modifiers: .command)
+            }
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") { model.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                    .disabled(!model.canUndo)
+                Button("Redo") { model.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!model.canRedo)
             }
         }
     }

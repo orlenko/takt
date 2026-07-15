@@ -59,6 +59,79 @@ public final class AppModel: ObservableObject {
     /// Set by the grid view so the model can request redraws.
     var gridNeedsDisplay: (() -> Void)?
 
+    // MARK: - Undo
+
+    /// The undo unit. Project alone is not enough: loopMode and the seed
+    /// label live outside it but are coupled to it (emptying the song
+    /// force-flips song → chain), and restoring one without the others
+    /// would land in states the user never inhabited.
+    struct Snapshot {
+        let project: Project
+        let loopMode: LoopMode
+        let seedName: String?
+    }
+
+    static let maxUndoDepth = 100
+    @Published private var undoStack: [Snapshot] = []
+    @Published private var redoStack: [Snapshot] = []
+    private var inUndoGesture = false
+
+    public var canUndo: Bool { !undoStack.isEmpty }
+    public var canRedo: Bool { !redoStack.isEmpty }
+
+    private func snapshot() -> Snapshot {
+        Snapshot(project: project, loopMode: loopMode, seedName: activeSeedName)
+    }
+
+    /// Called before every mutation. Continuous gestures (drag-paint, BPM
+    /// drag, swing slide) wrap themselves in begin/endUndoGesture so the
+    /// whole stroke coalesces into one undo step.
+    private func recordUndo() {
+        guard !inUndoGesture else { return }
+        undoStack.append(snapshot())
+        if undoStack.count > Self.maxUndoDepth { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    func beginUndoGesture() {
+        recordUndo()
+        inUndoGesture = true
+    }
+
+    func endUndoGesture() {
+        inUndoGesture = false
+    }
+
+    public func undo() {
+        guard let snap = undoStack.popLast() else { return }
+        redoStack.append(snapshot())
+        apply(snap)
+    }
+
+    public func redo() {
+        guard let snap = redoStack.popLast() else { return }
+        undoStack.append(snapshot())
+        apply(snap)
+    }
+
+    /// Restoring a snapshot replays side effects (kit buffers) and treats
+    /// any structural difference like slot add/remove: resync the play
+    /// order immediately, cancel cues. Undo never cues — ⌘Z scheduling a
+    /// pattern switch at the next boundary would be baffling — and never
+    /// stops playback.
+    private func apply(_ snap: Snapshot) {
+        let kitChanged = snap.project.kitID != project.kitID
+        project = snap.project
+        loopMode = snap.loopMode
+        activeSeedName = snap.seedName
+        if kitChanged { refreshKitBuffers() }
+        cuedSlot = nil
+        sequencer?.cueOrder(nil)
+        activePlayOrder = restingOrder()
+        pushState()
+        gridNeedsDisplay?()
+    }
+
     private var engine: AVAudioEngine?
     private var graph: DrumGraph?
     private var sequencer: Sequencer?
@@ -125,12 +198,18 @@ public final class AppModel: ObservableObject {
     }
 
     func setTempo(_ bpm: Double) {
-        project.tempoBPM = bpm.clamped(to: Project.tempoRange)
+        let clamped = bpm.clamped(to: Project.tempoRange)
+        guard clamped != project.tempoBPM else { return }
+        recordUndo()
+        project.tempoBPM = clamped
         pushState()
     }
 
     func setSwing(_ percent: Double) {
-        project.swingPercent = percent.clamped(to: Project.swingRange)
+        let clamped = percent.clamped(to: Project.swingRange)
+        guard clamped != project.swingPercent else { return }
+        recordUndo()
+        project.swingPercent = clamped
         pushState()
     }
 
@@ -139,6 +218,7 @@ public final class AppModel: ObservableObject {
     func setCell(track: Int, step: Int, velocity: UInt8) {
         guard project.currentPattern.tracks.indices.contains(track),
               project.currentPattern.tracks[track].steps.indices.contains(step) else { return }
+        recordUndo()
         project.currentPattern.tracks[track].steps[step].velocity = velocity
         activeSeedName = nil
         pushState()
@@ -167,18 +247,23 @@ public final class AppModel: ObservableObject {
     }
 
     func toggleMute(track: Int) {
+        recordUndo()
         project.currentPattern.tracks[track].isMuted.toggle()
         pushState()
         gridNeedsDisplay?()
     }
 
     func toggleSolo(track: Int) {
+        recordUndo()
         project.currentPattern.tracks[track].isSoloed.toggle()
         pushState()
         gridNeedsDisplay?()
     }
 
+    /// A seed retunes the whole instrument: bar content plus tempo and
+    /// swing (Decision A — project-scoped, one click from a groove).
     func loadSeed(_ seed: Seed) {
+        recordUndo()
         project.currentPattern = seed.pattern(kit: kit)
         project.tempoBPM = seed.tempoBPM
         project.swingPercent = seed.swingPercent
@@ -187,8 +272,27 @@ public final class AppModel: ObservableObject {
         gridNeedsDisplay?()
     }
 
+    /// Verb law: Clear empties the content, the container stays.
+    func clearPattern(at index: Int) {
+        guard project.patterns.indices.contains(index) else { return }
+        recordUndo()
+        project.patterns[index] = Pattern(kit: kit)
+        if index == editingSlot { activeSeedName = nil }
+        pushState()
+        gridNeedsDisplay?()
+    }
+
+    /// The "clear A" chip: empties the slot being edited.
     func clearPattern() {
-        project.currentPattern = Pattern(kit: kit)
+        clearPattern(at: editingSlot)
+    }
+
+    /// Lane menu Clear: silences one voice's row in the editing pattern.
+    func clearLane(_ track: Int) {
+        guard project.currentPattern.tracks.indices.contains(track) else { return }
+        recordUndo()
+        let count = project.currentPattern.tracks[track].steps.count
+        project.currentPattern.tracks[track].steps = Array(repeating: Step(), count: count)
         activeSeedName = nil
         pushState()
         gridNeedsDisplay?()
@@ -238,34 +342,54 @@ public final class AppModel: ObservableObject {
         return (0..<count).map { (slot + $0) % count }
     }
 
-    /// Duplicates the current slot into a new slot right after it and
-    /// selects the copy: the "add another block like this one" gesture.
-    func duplicateSlot() {
-        guard project.patterns.count < Self.maxSlots else { return }
-        let copy = project.currentPattern
-        let insertAt = project.currentPatternIndex + 1
-        project.patterns.insert(copy, at: insertAt)
-        project.currentPatternIndex += 1
+    /// Inserts a copy of `index` right after it. Menu verbs never move
+    /// selection (grammar L4); the ⧉ button selects the copy because it is
+    /// the "add another block like this one" gesture, not a menu verb.
+    private func insertDuplicate(of index: Int, selectCopy: Bool) {
+        guard project.patterns.count < Self.maxSlots,
+              project.patterns.indices.contains(index) else { return }
+        recordUndo()
+        project.patterns.insert(project.patterns[index], at: index + 1)
+        if selectCopy {
+            project.currentPatternIndex = index + 1
+        } else if project.currentPatternIndex > index {
+            project.currentPatternIndex += 1
+        }
         project.song = project.song.map {
-            $0.slot >= insertAt ? SongEntry(slot: $0.slot + 1, repeats: $0.repeats) : $0
+            $0.slot > index ? SongEntry(slot: $0.slot + 1, repeats: $0.repeats) : $0
         }
         resyncAfterStructureChange()
+    }
+
+    /// ⧉ button: duplicate the editing slot and select the copy.
+    func duplicateSlot() {
+        insertDuplicate(of: editingSlot, selectCopy: true)
+    }
+
+    /// Slot menu Duplicate: copy alongside, selection untouched.
+    func duplicateSlot(at index: Int) {
+        insertDuplicate(of: index, selectCopy: false)
     }
 
     /// Adds an empty slot at the end and selects it.
     func addEmptySlot() {
         guard project.patterns.count < Self.maxSlots else { return }
+        recordUndo()
         project.patterns.append(Pattern(kit: kit))
         project.currentPatternIndex = project.patterns.count - 1
         activeSeedName = nil
         resyncAfterStructureChange()
     }
 
-    func deleteSlot(_ index: Int) {
+    /// Verb law: Remove takes the container out.
+    func removeSlot(at index: Int) {
         guard project.patterns.count > 1,
               project.patterns.indices.contains(index) else { return }
+        recordUndo()
         project.patterns.remove(at: index)
-        if project.currentPatternIndex >= project.patterns.count {
+        if index < project.currentPatternIndex {
+            project.currentPatternIndex -= 1
+        } else if project.currentPatternIndex >= project.patterns.count {
             project.currentPatternIndex = project.patterns.count - 1
         }
         project.song = project.song.compactMap {
@@ -273,6 +397,27 @@ public final class AppModel: ObservableObject {
             return $0.slot > index ? SongEntry(slot: $0.slot - 1, repeats: $0.repeats) : $0
         }
         if project.song.isEmpty, loopMode == .song { loopMode = .chain }
+        resyncAfterStructureChange()
+    }
+
+    /// Slot menu Move Left/Right: swaps neighbors; song entries and the
+    /// selection follow their patterns.
+    func moveSlot(at index: Int, by delta: Int) {
+        let target = index + delta
+        guard project.patterns.indices.contains(index),
+              project.patterns.indices.contains(target) else { return }
+        recordUndo()
+        project.patterns.swapAt(index, target)
+        project.song = project.song.map { entry in
+            if entry.slot == index { return SongEntry(slot: target, repeats: entry.repeats) }
+            if entry.slot == target { return SongEntry(slot: index, repeats: entry.repeats) }
+            return entry
+        }
+        if project.currentPatternIndex == index {
+            project.currentPatternIndex = target
+        } else if project.currentPatternIndex == target {
+            project.currentPatternIndex = index
+        }
         resyncAfterStructureChange()
     }
 
@@ -312,29 +457,67 @@ public final class AppModel: ObservableObject {
     // MARK: - Song
 
     static let maxSongEntries = 16
+    /// The click ladder for repeats: songs are shaped in powers of two, so
+    /// ×8 is three clicks away, not seven (Decision B).
+    static let repeatSteps = [1, 2, 4, 8, 16]
 
-    /// Appends the slot being edited to the end of the song.
+    /// The "+ A" chip: appends the slot being edited to the song.
     func appendSongEntry() {
         guard project.song.count < Self.maxSongEntries else { return }
+        recordUndo()
         project.song.append(SongEntry(slot: editingSlot))
         songDidChange()
     }
 
-    /// Left click on a song chip: one more repeat, wrapping back to ×1 past
-    /// the cap (the velocity-cycle idiom).
-    func cycleSongRepeats(at index: Int) {
+    /// Left click on a song chip: next power of two, wrapping past ×16.
+    /// ⌥-click walks the ladder backwards. The one documented exception to
+    /// "clicks don't mutate" — repeats are a value, and this is its gesture.
+    func cycleSongRepeats(at index: Int, reverse: Bool = false) {
         guard project.song.indices.contains(index) else { return }
-        let repeats = project.song[index].repeats
-        project.song[index].repeats = repeats >= SongEntry.repeatsRange.upperBound
-            ? SongEntry.repeatsRange.lowerBound : repeats + 1
+        recordUndo()
+        let current = project.song[index].repeats
+        project.song[index].repeats = reverse
+            ? Self.repeatSteps.last { $0 < current } ?? Self.repeatSteps.last!
+            : Self.repeatSteps.first { $0 > current } ?? Self.repeatSteps.first!
+        songDidChange()
+    }
+
+    /// Menu direct-set: declarative, no incremental walking.
+    func setSongRepeats(at index: Int, to repeats: Int) {
+        guard project.song.indices.contains(index),
+              project.song[index].repeats != repeats else { return }
+        recordUndo()
+        project.song[index].repeats = repeats.clamped(to: SongEntry.repeatsRange)
+        songDidChange()
+    }
+
+    func duplicateSongEntry(at index: Int) {
+        guard project.song.count < Self.maxSongEntries,
+              project.song.indices.contains(index) else { return }
+        recordUndo()
+        project.song.insert(project.song[index], at: index + 1)
         songDidChange()
     }
 
     func removeSongEntry(at index: Int) {
         guard project.song.indices.contains(index) else { return }
+        recordUndo()
         project.song.remove(at: index)
         if project.song.isEmpty, loopMode == .song {
             loopMode = .chain // nothing left to follow
+            cueRestingOrder()
+        } else {
+            songDidChange()
+        }
+    }
+
+    /// The "clear song" chip: empties the whole arrangement (⌘Z undoes).
+    func clearSong() {
+        guard !project.song.isEmpty else { return }
+        recordUndo()
+        project.song.removeAll()
+        if loopMode == .song {
+            loopMode = .chain
             cueRestingOrder()
         } else {
             songDidChange()
@@ -345,6 +528,7 @@ public final class AppModel: ObservableObject {
         let target = index + delta
         guard project.song.indices.contains(index),
               project.song.indices.contains(target) else { return }
+        recordUndo()
         project.song.swapAt(index, target)
         songDidChange()
     }
@@ -364,6 +548,7 @@ public final class AppModel: ObservableObject {
 
     func selectKit(_ newKit: Kit) {
         guard newKit.id != project.kitID else { return }
+        recordUndo()
         project.kitID = newKit.id
         refreshKitBuffers()
         pushState()
@@ -461,6 +646,18 @@ public final class AppModel: ObservableObject {
 
     private static let taktType = UTType(filenameExtension: "takt", conformingTo: .json) ?? .json
 
+    /// File › New: a fresh instrument. Undoable, like everything else.
+    public func newProject() {
+        stop()
+        recordUndo()
+        project = Project(patterns: [Pattern(kit: .takt1)])
+        loopMode = .chain
+        activeSeedName = nil
+        refreshKitBuffers()
+        pushState()
+        gridNeedsDisplay?()
+    }
+
     public func saveProjectAs() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [Self.taktType]
@@ -486,6 +683,7 @@ public final class AppModel: ObservableObject {
             let loaded = try JSONDecoder().decode(Project.self, from: Data(contentsOf: url))
             guard !loaded.patterns.isEmpty else { throw TaktAudioError.renderFailed("empty project") }
             stop()
+            recordUndo() // "undo open" restores the previous session
             project = loaded
             project.currentPatternIndex = min(project.currentPatternIndex,
                                               project.patterns.count - 1)

@@ -22,6 +22,18 @@ persisted in the `.takt` document's `song` field; exports and TAKT Run
 follow the arrangement because everything downstream already consumes
 `playOrder`).
 
+The editing surface follows one interaction grammar (adopted after a UX
+review; see the design artifact): containers (slots, song entries, lanes) get
+right-click menus with exactly three verbs — Duplicate, Clear (empty the
+content), Remove (take the container out) — plus Move Left/Right where order
+matters, and menu verbs never move selection, cue, or playback; values
+(velocity, BPM, swing, repeats) are manipulated directly and never grow
+menus. Destructive chips name their object ("clear A", "+ A", "clear song").
+Loop mode lives on the transport next to play. A snapshot undo ring (⌘Z/⇧⌘Z,
+composite of project + loop mode + seed label, gesture-coalesced) backs every
+mutation; undo never cues and never stops playback. File › New completes the
+document verb ladder.
+
 Non-goals in v1 (deferred, the model must not preclude them): 32-step UI,
 probability/ratchets, polymeter, user sample import, MIDI learn mode, MIDI
 clock sync, per-step automation. The model stays agnostic (`stepCount`,

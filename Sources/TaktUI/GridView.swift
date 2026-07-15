@@ -231,6 +231,7 @@ final class GridNSView: NSView {
             }
         }
         if let (track, step) = hitCell(point) {
+            model.beginUndoGesture() // click + any paint drag = one ⌘Z
             paintVelocity = model.toggleCell(track: track, step: step)
         }
     }
@@ -245,6 +246,7 @@ final class GridNSView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if paintVelocity != nil { model?.endUndoGesture() }
         paintVelocity = nil
     }
 
@@ -253,7 +255,32 @@ final class GridNSView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if let (track, step) = hitCell(point) {
             model.cycleVelocity(track: track, step: step)
+            return
         }
+        // Lane headers are containers: they get the standard menu.
+        if let track = hitLaneHeader(point) {
+            let menu = NSMenu()
+            let item = NSMenuItem(title: "Clear", action: #selector(clearLane(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.tag = track
+            menu.addItem(item)
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        }
+    }
+
+    private func hitLaneHeader(_ point: NSPoint) -> Int? {
+        guard let model, point.x >= padSide, point.x < padSide + headWidth else { return nil }
+        for track in 0..<model.kit.voices.count
+        where NSRect(x: padSide, y: rowY(track), width: headWidth, height: cellHeight)
+            .contains(point) {
+            return track
+        }
+        return nil
+    }
+
+    @objc private func clearLane(_ sender: NSMenuItem) {
+        model?.clearLane(sender.tag)
     }
 }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TaktCore
 
@@ -37,19 +38,44 @@ struct TransportView: View {
 
     var body: some View {
         let theme = model.theme
-        HStack(spacing: 22) {
+        HStack(spacing: 16) {
             playButton
+            loopChips
+            Rectangle().fill(theme.line.swiftUI).frame(width: 1, height: 18)
             tempoControl
             beatLED
             swingControl
             Spacer(minLength: 12)
             seedChips
-            clearButton
         }
         .padding(.leading, 84) // room for the traffic lights (hidden title bar)
         .padding(.trailing, 20)
         .padding(.vertical, 13)
         .background(theme.raised.swiftUI)
+    }
+
+    /// Loop mode lives next to play: it is a play-mode selector (the 909's
+    /// pattern/song switch), not a property of any one row of chips.
+    private var loopChips: some View {
+        let theme = model.theme
+        return HStack(spacing: 8) {
+            Text("LOOP")
+                .font(.system(size: 9, design: .monospaced).weight(.medium))
+                .kerning(1.2)
+                .foregroundStyle(theme.faint.swiftUI)
+            Button("chain") { model.setLoopMode(.chain) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .chain))
+                .help("Loop every slot in order")
+            Button("slot") { model.setLoopMode(.slot) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .slot))
+                .help("Loop only the slot being edited")
+            Button("song") { model.setLoopMode(.song) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .song))
+                .disabled(model.project.song.isEmpty)
+                .help(model.project.song.isEmpty
+                    ? "Build a song in the SONG row first"
+                    : "Follow the song arrangement")
+        }
     }
 
     private var playButton: some View {
@@ -87,10 +113,16 @@ struct TransportView: View {
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
-                        if dragStartTempo == nil { dragStartTempo = model.project.tempoBPM }
+                        if dragStartTempo == nil {
+                            dragStartTempo = model.project.tempoBPM
+                            model.beginUndoGesture() // the whole drag = one ⌘Z
+                        }
                         model.setTempo((dragStartTempo ?? 120) - Double(value.translation.height) / 4)
                     }
-                    .onEnded { _ in dragStartTempo = nil }
+                    .onEnded { _ in
+                        dragStartTempo = nil
+                        model.endUndoGesture()
+                    }
             )
             stepper("+") { model.setTempo(model.project.tempoBPM + 1) }
         }
@@ -128,10 +160,13 @@ struct TransportView: View {
                 .foregroundStyle(theme.faint.swiftUI)
             Slider(value: Binding(get: { model.project.swingPercent },
                                   set: { model.setSwing($0) }),
-                   in: Project.swingRange)
+                   in: Project.swingRange,
+                   onEditingChanged: { editing in
+                       editing ? model.beginUndoGesture() : model.endUndoGesture()
+                   })
                 .controlSize(.small)
                 .tint(theme.accent.swiftUI)
-                .frame(width: 120)
+                .frame(width: 104)
             Text("\(Int(model.project.swingPercent.rounded()))%")
                 .font(.system(size: 11, design: .monospaced))
                 .monospacedDigit()
@@ -140,6 +175,8 @@ struct TransportView: View {
         }
     }
 
+    /// Seeds are actions (dashed), not selectors: one click overwrites the
+    /// bar and retunes tempo + swing. ⌘Z undoes.
     private var seedChips: some View {
         let theme = model.theme
         return HStack(spacing: 8) {
@@ -150,21 +187,20 @@ struct TransportView: View {
             ForEach(Seeds.all, id: \.name) { seed in
                 let active = model.activeSeedName == seed.name
                 Button(seed.name) { model.loadSeed(seed) }
-                    .buttonStyle(ChipStyle(theme: theme, active: active))
+                    .buttonStyle(ChipStyle(theme: theme, active: active, action: true))
+                    .help("Load the \(seed.name) groove: bar, tempo, and swing (⌘Z undoes)")
             }
         }
     }
-
-    private var clearButton: some View {
-        Button("clear") { model.clearPattern() }
-            .buttonStyle(ChipStyle(theme: model.theme, active: false, subdued: true))
-    }
 }
 
+/// Two visual registers (grammar R2): chips that show a current state get
+/// the accent ring when active; chips that DO something (`action`) get a
+/// dashed outline and dim text so they can never be mistaken for selectors.
 struct ChipStyle: ButtonStyle {
     let theme: Theme
     let active: Bool
-    var subdued = false
+    var action = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -172,11 +208,13 @@ struct ChipStyle: ButtonStyle {
             .kerning(0.6)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
-            .foregroundStyle((active ? theme.text : (subdued ? theme.dim : theme.text)).swiftUI)
+            .foregroundStyle((action && !active ? theme.dim : theme.text).swiftUI)
             .background((active
                 ? theme.accent.withAlphaComponent(0.16)
                 : theme.surface).swiftUI)
-            .overlay(Capsule().stroke((active ? theme.accent : theme.line).swiftUI, lineWidth: 1))
+            .overlay(Capsule().stroke(
+                (active ? theme.accent : theme.line).swiftUI,
+                style: StrokeStyle(lineWidth: 1, dash: action && !active ? [3.5, 2.5] : [])))
             .clipShape(Capsule())
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
@@ -201,12 +239,18 @@ struct PatternBarView: View {
             }
             if model.project.patterns.count < AppModel.maxSlots {
                 Button("⧉") { model.duplicateSlot() }
-                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
                     .help("Duplicate this slot into a new one")
                 Button("+") { model.addEmptySlot() }
-                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
                     .help("Add an empty slot")
             }
+            Rectangle().fill(theme.line.swiftUI).frame(width: 1, height: 18)
+            // Destructive labels name their object (grammar L3): the clear
+            // chip tracks the slot being edited.
+            Button("clear \(AppModel.slotName(model.editingSlot))") { model.clearPattern() }
+                .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
+                .help("Empty slot \(AppModel.slotName(model.editingSlot))'s pattern (⌘Z undoes)")
             Spacer()
             Text("KIT")
                 .font(.system(size: 9, design: .monospaced).weight(.medium))
@@ -216,23 +260,6 @@ struct PatternBarView: View {
                 Button(kit.name) { model.selectKit(kit) }
                     .buttonStyle(ChipStyle(theme: theme, active: model.project.kitID == kit.id))
             }
-            Spacer().frame(width: 14)
-            Text("LOOP")
-                .font(.system(size: 9, design: .monospaced).weight(.medium))
-                .kerning(1.2)
-                .foregroundStyle(theme.faint.swiftUI)
-            Button("chain") { model.setLoopMode(.chain) }
-                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .chain))
-                .help("Loop every slot in order")
-            Button("slot") { model.setLoopMode(.slot) }
-                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .slot))
-                .help("Loop only the slot being edited")
-            Button("song") { model.setLoopMode(.song) }
-                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .song))
-                .disabled(model.project.song.isEmpty)
-                .help(model.project.song.isEmpty
-                    ? "Build a song in the SONG row first"
-                    : "Follow the song arrangement")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 9)
@@ -260,16 +287,18 @@ struct PatternBarView: View {
         .buttonStyle(ChipStyle(theme: theme, active: model.editingSlot == index))
         .help(cued ? "Cued: plays when the current pattern ends" : "")
         .contextMenu {
-            Button("Duplicate") {
-                model.selectSlot(index)
-                model.duplicateSlot()
-            }
-            Button("Clear") {
-                model.selectSlot(index)
-                model.clearPattern()
-            }
-            Button("Delete", role: .destructive) { model.deleteSlot(index) }
+            // Menu verbs act on their target and never move selection, cue,
+            // or playback (grammar L4).
+            Button("Duplicate") { model.duplicateSlot(at: index) }
+                .disabled(model.project.patterns.count >= AppModel.maxSlots)
+            Button("Clear") { model.clearPattern(at: index) }
+            Button("Remove", role: .destructive) { model.removeSlot(at: index) }
                 .disabled(model.project.patterns.count <= 1)
+            Divider()
+            Button("Move Left") { model.moveSlot(at: index, by: -1) }
+                .disabled(index == 0)
+            Button("Move Right") { model.moveSlot(at: index, by: 1) }
+                .disabled(index == model.project.patterns.count - 1)
         }
     }
 }
@@ -293,8 +322,9 @@ struct SongBarView: View {
                 songChip(index)
             }
             if model.project.song.count < AppModel.maxSongEntries {
-                Button("+") { model.appendSongEntry() }
-                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                // The append chip names what it will append (grammar L3).
+                Button("+ \(AppModel.slotName(model.editingSlot))") { model.appendSongEntry() }
+                    .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
                     .help("Append slot \(AppModel.slotName(model.editingSlot)) to the song")
             }
             if model.project.song.isEmpty {
@@ -302,6 +332,11 @@ struct SongBarView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .kerning(0.4)
                     .foregroundStyle(theme.faint.swiftUI)
+            } else {
+                Rectangle().fill(theme.line.swiftUI).frame(width: 1, height: 18)
+                Button("clear song") { model.clearSong() }
+                    .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
+                    .help("Empty the whole arrangement (⌘Z undoes)")
             }
             Spacer()
         }
@@ -314,18 +349,32 @@ struct SongBarView: View {
         let theme = model.theme
         let entry = model.project.song[index]
         return Button {
-            model.cycleSongRepeats(at: index)
+            // Repeats are a value; click walks the powers-of-two ladder,
+            // ⌥-click walks it backwards (Decision B).
+            model.cycleSongRepeats(at: index,
+                                   reverse: NSEvent.modifierFlags.contains(.option))
         } label: {
             Text("\(AppModel.slotName(entry.slot))×\(entry.repeats)")
         }
         .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .song))
-        .help("Click: one more repeat (wraps past ×\(SongEntry.repeatsRange.upperBound))")
+        .help("Click: ×1→×2→×4→×8→×16 · ⌥-click: backwards")
         .contextMenu {
+            Button("Duplicate") { model.duplicateSongEntry(at: index) }
+                .disabled(model.project.song.count >= AppModel.maxSongEntries)
+            Button("Remove", role: .destructive) { model.removeSongEntry(at: index) }
+            Divider()
             Button("Move Left") { model.moveSongEntry(at: index, by: -1) }
                 .disabled(index == 0)
             Button("Move Right") { model.moveSongEntry(at: index, by: 1) }
                 .disabled(index == model.project.song.count - 1)
-            Button("Remove", role: .destructive) { model.removeSongEntry(at: index) }
+            Divider()
+            Menu("Repeats") {
+                ForEach(AppModel.repeatSteps, id: \.self) { n in
+                    Button("×\(n)\(entry.repeats == n ? "  ✓" : "")") {
+                        model.setSongRepeats(at: index, to: n)
+                    }
+                }
+            }
         }
     }
 }
@@ -338,7 +387,7 @@ struct StatusBarView: View {
     var body: some View {
         let theme = model.theme
         HStack(spacing: 16) {
-            Text("click toggle · right-click velocity · drag paint · space play · a–k jam")
+            Text("click toggle · right-click velocity/menu · drag paint · ⌘Z undo · space play · a–k jam")
                 .font(.system(size: 10, design: .monospaced))
                 .kerning(0.4)
                 .foregroundStyle(theme.faint.swiftUI)
@@ -361,7 +410,7 @@ struct StatusBarView: View {
                     .kerning(1.2)
                     .foregroundStyle(theme.faint.swiftUI)
                 Button("midi") { model.exportMIDI() }
-                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
                     .disabled(model.isExporting)
                 Menu {
                     Button("1 pass") { model.exportAudio(format: .wav, cycles: 1) }
@@ -384,7 +433,8 @@ struct StatusBarView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(theme.surface.swiftUI)
-                .overlay(Capsule().stroke(theme.line.swiftUI, lineWidth: 1))
+                .overlay(Capsule().stroke(theme.line.swiftUI,
+                                          style: StrokeStyle(lineWidth: 1, dash: [3.5, 2.5])))
                 .clipShape(Capsule())
                 .disabled(model.isExporting)
             }

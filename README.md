@@ -25,6 +25,10 @@ with giant tempo controls built for mid-stride use.
   the arrangement. Exports render it, and TAKT Run plays it on your phone.
 - Swing (50–75%), per-lane mute/solo, open-hat choke, genre seeds
   (House, Breaks, Hip-Hop, Techno) as starting points.
+- Undo everywhere (⌘Z/⇧⌘Z): every edit — cells, slots, song, kit, tempo —
+  is one keystroke from taken-back; drags and paints coalesce into single
+  undo steps. One right-click menu vocabulary at every level: Duplicate /
+  Clear / Remove / Move.
 - Play it live: QWERTY keys `A S D F G H J K`, or a MIDI keyboard via the GM
   drum map (kick 36, snare 38, clap 39, rim 37, hats 42/46, tom 45, cowbell
   56), velocity-sensitive with hot-plug.

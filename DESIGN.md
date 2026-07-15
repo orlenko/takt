@@ -73,5 +73,9 @@ Scale ratio ~1.2. BPM readout is the largest number on screen.
 - Buttons: 6px radius, raised surface, 1px line border; accent fill only for
   play/record and primary confirm.
 - Chips (pattern slots, kit picker): pill, mono label, accent ring when active.
+  Two registers, never a third: **state chips** show what is current (solid line
+  border, accent ring when active); **action chips** do something when clicked
+  (dashed border, dim label — seeds, ⧉, +, clear, export). A chip that mutates
+  must never dress like a harmless selector.
 - Sliders: native-feel horizontal range, accent thumb, value readout to the right.
 - Every control ships default / hover / focus-visible / active / disabled.
