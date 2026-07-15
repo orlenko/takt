@@ -345,7 +345,16 @@ struct SongBarView: View {
         .background(theme.raised.swiftUI)
     }
 
+    @ViewBuilder
     private func songChip(_ index: Int) -> some View {
+        // ForEach over indices can re-evaluate a chip with a stale index
+        // while entries are being removed; subscripting blindly would crash.
+        if model.project.song.indices.contains(index) {
+            songChipBody(index)
+        }
+    }
+
+    private func songChipBody(_ index: Int) -> some View {
         let theme = model.theme
         let entry = model.project.song[index]
         return Button {
