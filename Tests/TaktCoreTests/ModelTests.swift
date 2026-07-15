@@ -112,6 +112,19 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(decoded, project)
     }
 
+    func testSetStepCountResizesTracks() {
+        var pattern = Pattern(kit: .takt1)
+        pattern.tracks[0].steps[15] = Step(velocity: 127)
+        pattern.setStepCount(20) // 5/4: pads with silence
+        XCTAssertEqual(pattern.stepCount, 20)
+        XCTAssertTrue(pattern.tracks.allSatisfy { $0.steps.count == 20 })
+        XCTAssertEqual(pattern.tracks[0].steps[15].velocity, 127, "existing hits survive")
+        XCTAssertFalse(pattern.tracks[0].steps[16...].contains(where: \.isOn))
+        pattern.setStepCount(12) // 3/4: truncates
+        XCTAssertTrue(pattern.tracks.allSatisfy { $0.steps.count == 12 })
+        XCTAssertFalse(pattern.tracks[0].steps.contains(where: \.isOn), "hit at 15 truncated")
+    }
+
     func testSoloBeatsMute() {
         var pattern = Pattern(kit: .takt1)
         // No solo: mute decides.

@@ -19,7 +19,7 @@ public struct ContentView: View {
             SongBarView(model: model)
             Rectangle().fill(theme.line.swiftUI).frame(height: 1)
             GridView(model: model)
-                .frame(minWidth: 1060, idealWidth: 1100,
+                .frame(minWidth: 1140, idealWidth: 1180,
                        minHeight: GridNSView.preferredHeight,
                        maxHeight: GridNSView.preferredHeight)
             Rectangle().fill(theme.line.swiftUI).frame(height: 1)
@@ -251,6 +251,13 @@ struct PatternBarView: View {
             Button("clear \(AppModel.slotName(model.editingSlot))") { model.clearPattern() }
                 .buttonStyle(ChipStyle(theme: theme, active: false, action: true))
                 .help("Empty slot \(AppModel.slotName(model.editingSlot))'s pattern (⌘Z undoes)")
+            // Time signature is a per-bar value: click cycles, ⌥-click
+            // walks backwards (the song-chip gesture pair).
+            Button("\(model.editingMeterBeats)/4") {
+                model.cycleMeter(reverse: NSEvent.modifierFlags.contains(.option))
+            }
+            .buttonStyle(ChipStyle(theme: theme, active: false))
+            .help("Time signature of slot \(AppModel.slotName(model.editingSlot)) · click 2/4→7/4, ⌥-click backwards")
             Spacer()
             Text("KIT")
                 .font(.system(size: 9, design: .monospaced).weight(.medium))

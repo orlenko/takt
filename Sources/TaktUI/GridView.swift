@@ -22,8 +22,6 @@ final class GridNSView: NSView {
     private let beatGap: CGFloat = 15
     private let msSize: CGFloat = 19
 
-    static let steps = 16
-
     private var paintVelocity: UInt8?
 
     override var isFlipped: Bool { true }
@@ -34,9 +32,16 @@ final class GridNSView: NSView {
 
     // MARK: - Geometry
 
+    /// Bar length follows the editing pattern's meter: 12 steps for 3/4,
+    /// 16 for 4/4, 20 for 5/4… Cells flex to keep the row width constant.
+    private var steps: Int {
+        max(4, model?.project.currentPattern.stepCount ?? 16)
+    }
+
     private var cellWidth: CGFloat {
-        let gaps = CGFloat(Self.steps - 4) * cellGap + 3 * beatGap
-        return (bounds.width - 2 * padSide - headWidth - gaps) / CGFloat(Self.steps)
+        let beats = steps / 4
+        let gaps = CGFloat(steps - beats) * cellGap + CGFloat(beats - 1) * beatGap
+        return (bounds.width - 2 * padSide - headWidth - gaps) / CGFloat(steps)
     }
 
     private func cellX(_ step: Int) -> CGFloat {
@@ -66,7 +71,7 @@ final class GridNSView: NSView {
     private func hitCell(_ point: NSPoint) -> (track: Int, step: Int)? {
         guard let model else { return nil }
         for track in 0..<model.kit.voices.count {
-            for step in 0..<Self.steps
+            for step in 0..<steps
             where cellRect(track: track, step: step).insetBy(dx: -cellGap / 2, dy: -rowGap / 2)
                 .contains(point) {
                 return (track, step)
@@ -95,7 +100,7 @@ final class GridNSView: NSView {
         }
 
         // Step number row: beat numbers over downbeats, dots elsewhere.
-        for step in 0..<Self.steps {
+        for step in 0..<steps {
             let isBeat = step % 4 == 0
             let isNow = playheadStep == step
             let label = isBeat ? "\(step / 4 + 1)" : "·"
@@ -131,11 +136,12 @@ final class GridNSView: NSView {
             drawToggle(soloRect(track: track), label: "S", on: trackData.isSoloed, theme: theme)
 
             // Cells.
-            for step in 0..<Self.steps {
+            for step in 0..<steps {
                 let rect = cellRect(track: track, step: step)
                 let path = NSBezierPath(roundedRect: rect, xRadius: theme.cellRadius,
                                         yRadius: theme.cellRadius)
-                let velocity = trackData.steps[step].velocity
+                // Foreign files may disagree about stepCount vs. steps.
+                let velocity = step < trackData.steps.count ? trackData.steps[step].velocity : 0
                 let level = VelocityLevel(nearest: velocity)
 
                 var fill: NSColor = step % 4 == 0 ? theme.cellBeat : theme.cell

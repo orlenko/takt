@@ -33,6 +33,14 @@ public final class AppModel: ObservableObject {
     /// The play order currently sounding; cued changes replace it when they
     /// land at a boundary (see Sequencer.onOrderChange).
     private var activePlayOrder: [Int] = [0]
+    /// Position in activePlayOrder currently sounding (from onStep).
+    private var playingOrderPos: Int?
+    /// Song-entry index for each activePlayOrder position (song mode only;
+    /// empty otherwise). Kept in lockstep with the song that produced the
+    /// active order so edits can find "the entry playing right now".
+    private var activeEntrySpans: [Int] = []
+    /// Spans staged with a cue; promoted when the cue lands (onOrderChange).
+    private var pendingEntrySpans: [Int]?
 
     static let maxSlots = 8
     @Published var themeID: ThemeID {
@@ -127,7 +135,9 @@ public final class AppModel: ObservableObject {
         if kitChanged { refreshKitBuffers() }
         cuedSlot = nil
         sequencer?.cueOrder(nil)
+        pendingEntrySpans = nil
         activePlayOrder = restingOrder()
+        activeEntrySpans = loopMode == .song ? entrySpans(of: project.song) : []
         pushState()
         gridNeedsDisplay?()
     }
@@ -136,7 +146,7 @@ public final class AppModel: ObservableObject {
     private var graph: DrumGraph?
     private var sequencer: Sequencer?
     private var midi: MIDIInput?
-    private var pendingSteps: [(slot: Int, step: Int, time: Double)] = []
+    private var pendingSteps: [(slot: Int, orderPos: Int, step: Int, time: Double)] = []
     private var displayTimer: Timer?
     private var keyMonitor: Any?
     private static let jamKeys = Array("asdfghjk")
@@ -176,6 +186,9 @@ public final class AppModel: ObservableObject {
             let sequencer = try ensureEngine()
             pendingSteps.removeAll()
             activePlayOrder = restingOrder()
+            activeEntrySpans = loopMode == .song ? entrySpans(of: project.song) : []
+            pendingEntrySpans = nil
+            playingOrderPos = nil
             cuedSlot = nil
             sequencer.cueOrder(nil)
             sequencer.update(currentState())
@@ -193,6 +206,7 @@ public final class AppModel: ObservableObject {
         pendingSteps.removeAll()
         displayedStep = nil
         playingSlot = nil
+        playingOrderPos = nil
         cuedSlot = nil
         gridNeedsDisplay?()
     }
@@ -317,6 +331,7 @@ public final class AppModel: ObservableObject {
                 sequencer?.cueOrder(nil)
             } else {
                 cuedSlot = index
+                pendingEntrySpans = nil
                 sequencer?.cueOrder(cuedOrder(startingAt: index))
             }
             // content refresh below; play order untouched until the cue lands
@@ -427,7 +442,9 @@ public final class AppModel: ObservableObject {
     private func resyncAfterStructureChange() {
         cuedSlot = nil
         sequencer?.cueOrder(nil)
+        pendingEntrySpans = nil
         activePlayOrder = restingOrder()
+        activeEntrySpans = loopMode == .song ? entrySpans(of: project.song) : []
         pushState()
         gridNeedsDisplay?()
     }
@@ -445,13 +462,48 @@ public final class AppModel: ObservableObject {
             pushState()
             return
         }
-        let order: [Int] = switch loopMode {
-        case .chain: cuedOrder(startingAt: playingSlot ?? editingSlot)
-        case .slot: [editingSlot]
-        case .song: restingOrder()
+        if loopMode == .song {
+            cueSongOrder(resumeAtEntry: nil)
+            return
         }
+        let order = loopMode == .chain
+            ? cuedOrder(startingAt: playingSlot ?? editingSlot)
+            : [editingSlot]
+        pendingEntrySpans = nil
         sequencer?.cueOrder(order)
         cuedSlot = order.first == playingSlot ? nil : order.first
+    }
+
+    /// Cue the current song, resuming at `resumeAtEntry` if it still exists
+    /// (Decision C: edits land at boundaries and never lose your place).
+    /// nil restarts from the top — used when entering song mode.
+    private func cueSongOrder(resumeAtEntry: Int?) {
+        let order = project.songOrder
+        guard !order.isEmpty else { return } // callers flip mode before emptying
+        let spans = entrySpans(of: project.song)
+        let startAt = resumeAtEntry.flatMap { spans.firstIndex(of: $0) } ?? 0
+        pendingEntrySpans = spans
+        sequencer?.cueOrder(order, startAt: startAt)
+        cuedSlot = order[startAt] == playingSlot ? nil : order[startAt]
+    }
+
+    /// Song-entry index for each position of the song's expanded order.
+    /// Must mirror Project.songOrder's expansion exactly.
+    private func entrySpans(of song: [SongEntry]) -> [Int] {
+        song.enumerated().flatMap { index, entry in
+            project.patterns.indices.contains(entry.slot)
+                ? Array(repeating: index,
+                        count: entry.repeats.clamped(to: SongEntry.repeatsRange))
+                : []
+        }
+    }
+
+    /// The song entry sounding right now (song mode while playing).
+    private var playingEntry: Int? {
+        guard let pos = playingOrderPos, activeEntrySpans.indices.contains(pos) else {
+            return nil
+        }
+        return activeEntrySpans[pos]
     }
 
     // MARK: - Song
@@ -466,7 +518,7 @@ public final class AppModel: ObservableObject {
         guard project.song.count < Self.maxSongEntries else { return }
         recordUndo()
         project.song.append(SongEntry(slot: editingSlot))
-        songDidChange()
+        songDidChange(resumeAtEntry: playingEntry)
     }
 
     /// Left click on a song chip: next power of two, wrapping past ×16.
@@ -479,7 +531,7 @@ public final class AppModel: ObservableObject {
         project.song[index].repeats = reverse
             ? Self.repeatSteps.last { $0 < current } ?? Self.repeatSteps.last!
             : Self.repeatSteps.first { $0 > current } ?? Self.repeatSteps.first!
-        songDidChange()
+        songDidChange(resumeAtEntry: playingEntry)
     }
 
     /// Menu direct-set: declarative, no incremental walking.
@@ -488,26 +540,30 @@ public final class AppModel: ObservableObject {
               project.song[index].repeats != repeats else { return }
         recordUndo()
         project.song[index].repeats = repeats.clamped(to: SongEntry.repeatsRange)
-        songDidChange()
+        songDidChange(resumeAtEntry: playingEntry)
     }
 
     func duplicateSongEntry(at index: Int) {
         guard project.song.count < Self.maxSongEntries,
               project.song.indices.contains(index) else { return }
         recordUndo()
+        let playing = playingEntry
         project.song.insert(project.song[index], at: index + 1)
-        songDidChange()
+        songDidChange(resumeAtEntry: playing.map { $0 > index ? $0 + 1 : $0 })
     }
 
     func removeSongEntry(at index: Int) {
         guard project.song.indices.contains(index) else { return }
         recordUndo()
+        let playing = playingEntry
         project.song.remove(at: index)
         if project.song.isEmpty, loopMode == .song {
             loopMode = .chain // nothing left to follow
             cueRestingOrder()
         } else {
-            songDidChange()
+            // Playing entry after the removal slides down; removing the
+            // playing entry itself resumes at whatever slid into its place.
+            songDidChange(resumeAtEntry: playing.map { $0 > index ? $0 - 1 : $0 })
         }
     }
 
@@ -520,7 +576,7 @@ public final class AppModel: ObservableObject {
             loopMode = .chain
             cueRestingOrder()
         } else {
-            songDidChange()
+            songDidChange(resumeAtEntry: nil)
         }
     }
 
@@ -529,19 +585,51 @@ public final class AppModel: ObservableObject {
         guard project.song.indices.contains(index),
               project.song.indices.contains(target) else { return }
         recordUndo()
+        let playing = playingEntry
         project.song.swapAt(index, target)
-        songDidChange()
+        let resume = playing.map { $0 == index ? target : ($0 == target ? index : $0) }
+        songDidChange(resumeAtEntry: resume)
     }
 
     /// Song edits are structure changes: while the song is driving playback
-    /// they land at the pattern boundary and restart the arrangement. In
-    /// chain/slot modes they leave playback alone.
-    private func songDidChange() {
+    /// they land at the pattern boundary, resuming at the entry that was
+    /// sounding (Decision C — never lose your place). In chain/slot modes
+    /// they leave playback alone.
+    private func songDidChange(resumeAtEntry: Int?) {
         if isPlaying, loopMode == .song {
-            cueRestingOrder()
-        } else {
-            pushState()
+            cueSongOrder(resumeAtEntry: resumeAtEntry)
         }
+        pushState()
+    }
+
+    // MARK: - Meter
+
+    /// Beats per bar; steps are sixteenths, so stepCount = beats × 4.
+    /// 3 = waltz, 5 = Take Five, up to 7.
+    static let meterBeatsRange = 2...7
+
+    var editingMeterBeats: Int { max(1, project.currentPattern.stepCount / 4) }
+
+    /// The meter chip: click walks 2/4 → … → 7/4 and wraps; ⌥-click walks
+    /// backwards (the song-chip gesture pair).
+    func cycleMeter(reverse: Bool = false) {
+        let beats = editingMeterBeats
+        let next = reverse
+            ? (beats <= Self.meterBeatsRange.lowerBound ? Self.meterBeatsRange.upperBound : beats - 1)
+            : (beats >= Self.meterBeatsRange.upperBound ? Self.meterBeatsRange.lowerBound : beats + 1)
+        setMeter(beats: next)
+    }
+
+    /// Change the editing slot's time signature; longer bars pad with
+    /// silence, shorter bars truncate (⌘Z restores the tail).
+    func setMeter(beats: Int) {
+        let clamped = beats.clamped(to: Self.meterBeatsRange)
+        guard clamped * 4 != project.currentPattern.stepCount else { return }
+        recordUndo()
+        project.currentPattern.setStepCount(clamped * 4)
+        activeSeedName = nil
+        pushState()
+        gridNeedsDisplay?()
     }
 
     // MARK: - Kits
@@ -784,15 +872,18 @@ public final class AppModel: ObservableObject {
         try engine.start()
         graph.startPlayers()
         let sequencer = Sequencer(graph: graph, state: currentState())
-        sequencer.onStep = { [weak self] slot, step, time in
+        sequencer.onStep = { [weak self] slot, orderPos, step, time in
             DispatchQueue.main.async {
-                self?.pendingSteps.append((slot, step, time))
+                self?.pendingSteps.append((slot, orderPos, step, time))
             }
         }
         sequencer.onOrderChange = { [weak self] order in
             DispatchQueue.main.async {
-                self?.activePlayOrder = order
-                self?.cuedSlot = nil
+                guard let self else { return }
+                self.activePlayOrder = order
+                self.activeEntrySpans = self.pendingEntrySpans ?? []
+                self.pendingEntrySpans = nil
+                self.cuedSlot = nil
             }
         }
         self.engine = engine
@@ -819,6 +910,7 @@ public final class AppModel: ObservableObject {
         while let first = pendingSteps.first, first.time <= now {
             newStep = first.step
             newSlot = first.slot
+            playingOrderPos = first.orderPos
             pendingSteps.removeFirst()
             if now - first.time < 0.08, project.patterns.indices.contains(first.slot) {
                 let pattern = project.patterns[first.slot]

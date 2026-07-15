@@ -20,7 +20,14 @@ structure changes land on the bar); song mode (a SONG row of slot×repeat
 entries — `A×4 B×2 A×4 C×1` — as a third loop mode next to chain/slot,
 persisted in the `.takt` document's `song` field; exports and TAKT Run
 follow the arrangement because everything downstream already consumes
-`playOrder`).
+`playOrder`); time signatures (per-slot meter 2/4–7/4 as a value chip in the
+pattern bar; `stepCount` = beats × 4 sixteenths, so the engine, choke, bounce,
+and Android player were already meter-agnostic — the grid draws N flexing
+columns and the SMF writer emits time-signature metas at meter changes;
+mixed-meter chains and songs work); and the sacred playing surface (song
+edits while the song plays land at the pattern boundary and resume at the
+entry that was sounding — `Sequencer.cueOrder(startAt:)` — never restarting
+the arrangement).
 
 The editing surface follows one interaction grammar (adopted after a UX
 review; see the design artifact): containers (slots, song entries, lanes) get

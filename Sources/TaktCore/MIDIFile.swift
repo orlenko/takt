@@ -12,9 +12,18 @@ public enum MIDIFile {
         let gate = ticksPer16th / 2 // short drum gate
 
         var events: [(tick: Int, bytes: [UInt8])] = []
+        var metas: [(tick: Int, bytes: [UInt8])] = []
         var origin = 0
+        var lastNumerator = 0
         for index in playOrder where patterns.indices.contains(index) {
             let pattern = patterns[index]
+            // Time-signature meta wherever the meter changes. Bars are x/4 by
+            // construction (stepCount = beats × 4 sixteenths).
+            let numerator = max(1, pattern.stepCount / 4)
+            if numerator != lastNumerator {
+                metas.append((origin, [0xFF, 0x58, 0x04, UInt8(numerator), 2, 24, 8]))
+                lastNumerator = numerator
+            }
             for (t, track) in pattern.tracks.enumerated() {
                 guard pattern.isAudible(trackIndex: t),
                       let note = kit.voice(id: track.voiceID)?.gmNote else { continue }
@@ -33,6 +42,19 @@ public enum MIDIFile {
         // Offs before ons at the same tick (0x89 < 0x99) so retriggered notes
         // never read as overlapping. Tempo meta is pinned ahead of the sort.
         events.sort { $0.tick == $1.tick ? $0.bytes[0] < $1.bytes[0] : $0.tick < $1.tick }
+        // Time-signature metas land ahead of notes sharing their tick (a byte
+        // sort would put 0xFF after 0x99).
+        var merged: [(tick: Int, bytes: [UInt8])] = []
+        var mi = 0
+        for event in events {
+            while mi < metas.count, metas[mi].tick <= event.tick {
+                merged.append(metas[mi])
+                mi += 1
+            }
+            merged.append(event)
+        }
+        merged.append(contentsOf: metas[mi...])
+        events = merged
         let microsecondsPerQuarter = Int((60_000_000 / tempoBPM).rounded())
         events.insert((0, [0xFF, 0x51, 0x03,
                            UInt8((microsecondsPerQuarter >> 16) & 0xFF),

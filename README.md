@@ -23,6 +23,11 @@ with giant tempo controls built for mid-stride use.
   whole chain in order, or just the slot you're editing.
 - Song mode: arrange slots into a SONG row — `A×4 B×2 A×4 C×1` — and loop
   the arrangement. Exports render it, and TAKT Run plays it on your phone.
+  Editing the song while it plays never loses your place: changes land at
+  the bar line and resume from the section that was sounding.
+- Time signatures per slot, 2/4 through 7/4: make a waltz, or go full Take
+  Five with a 5/4 bar — even mixed meters inside one song. MIDI exports
+  carry proper time-signature metas, and the Android player follows along.
 - Swing (50–75%), per-lane mute/solo, open-hat choke, genre seeds
   (House, Breaks, Hip-Hop, Techno) as starting points.
 - Undo everywhere (⌘Z/⇧⌘Z): every edit — cells, slots, song, kit, tempo —

@@ -47,6 +47,32 @@ final class BounceTests: XCTestCase {
         XCTAssertGreaterThan(try rms(of: url, fromSecond: 0, toSecond: 0.05), 0.05)
     }
 
+    func testFiveFourBarRendersExactLength() throws {
+        // Take Five territory: a 20-step (5/4) bar must render 5 beats per
+        // loop, with the hit on beat 5 audible right where 4/4 would have
+        // already wrapped.
+        var pattern = TaktCore.Pattern(kit: .takt1)
+        pattern.setStepCount(20)
+        pattern.tracks[0].steps[0] = Step(velocity: 127)  // kick, beat 1
+        pattern.tracks[1].steps[16] = Step(velocity: 127) // snare, beat 5
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("takt-fivefour-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let tempo = 120.0
+        let seconds = try Bounce.render(pattern: pattern, kit: .takt1, tempoBPM: tempo,
+                                        swingPercent: 50, loops: 1, to: url)
+        let expected = Timing.loopDuration(stepCount: 20, tempoBPM: tempo) + 0.5
+        XCTAssertEqual(seconds, expected, accuracy: 1e-9)
+        XCTAssertEqual(expected, 2.5 + 0.5, accuracy: 1e-9, "5 beats at 120 BPM = 2.5 s")
+
+        // Beat 5 starts at 2.0 s; the snare must sound there.
+        XCTAssertGreaterThan(try rms(of: url, fromSecond: 2.0, toSecond: 2.1), 0.02)
+        // And beats 2–4 (kick tail aside) are quieter than the beat-5 window.
+        XCTAssertGreaterThan(try rms(of: url, fromSecond: 2.0, toSecond: 2.1),
+                             try rms(of: url, fromSecond: 1.5, toSecond: 1.9) * 3)
+    }
+
     func testEveryKitLoadsAndSounds() throws {
         for kit in Kit.all {
             let buffers = try KitBuffers(kit: kit)

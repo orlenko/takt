@@ -45,11 +45,12 @@ public final class Sequencer {
     private var stepIndex = 0
     private var orderPos = 0
     private var nextTime: Double = 0 // host-clock seconds
-    private var cuedOrder: [Int]?
+    private var cuedOrder: (order: [Int], startAt: Int)?
 
     /// Called on the sequencer queue for every scheduled step with
-    /// (patternIndex, step, hostSeconds when it sounds). Hop to main for UI.
-    public var onStep: (@Sendable (Int, Int, Double) -> Void)?
+    /// (patternIndex, orderPos, step, hostSeconds when it sounds). Hop to
+    /// main for UI.
+    public var onStep: (@Sendable (Int, Int, Int, Double) -> Void)?
 
     /// Called on the sequencer queue when a cued play order takes effect at
     /// a pattern boundary (hardware-style quantized switching).
@@ -78,8 +79,11 @@ public final class Sequencer {
 
     /// Cue a play order to take effect when the current pattern finishes
     /// (hardware tradition: select sloppy, land tight). Pass nil to cancel.
-    public func cueOrder(_ order: [Int]?) {
-        queue.async { self.cuedOrder = order }
+    /// `startAt` is where in the new order playback resumes — song edits use
+    /// it to keep the arrangement position instead of restarting at the top;
+    /// later wraps still return to position 0.
+    public func cueOrder(_ order: [Int]?, startAt: Int = 0) {
+        queue.async { self.cuedOrder = order.map { ($0, startAt) } }
     }
 
     public func start() {
@@ -139,7 +143,7 @@ public final class Sequencer {
                               at: time, maxDuration: choke)
             }
 
-            onStep?(patternIndex, step, nextTime)
+            onStep?(patternIndex, orderPos, step, nextTime)
             nextTime += Timing.stepDuration(step: step, tempoBPM: s.tempoBPM,
                                             swingPercent: s.swingPercent)
             stepIndex += 1
@@ -154,8 +158,8 @@ public final class Sequencer {
         stepIndex = 0
         if let cued = cuedOrder {
             cuedOrder = nil
-            state.playOrder = cued.isEmpty ? [0] : cued
-            orderPos = 0
+            state.playOrder = cued.order.isEmpty ? [0] : cued.order
+            orderPos = cued.startAt.clamped(to: 0...(state.playOrder.count - 1))
             onOrderChange?(state.playOrder)
         } else {
             orderPos = (orderPos + 1) % max(1, state.playOrder.count)

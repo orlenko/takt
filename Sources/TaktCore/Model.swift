@@ -142,6 +142,20 @@ public struct Pattern: Codable, Equatable, Sendable {
                   tracks: kit.voices.map { Track(voiceID: $0.id, stepCount: stepCount) })
     }
 
+    /// Change the bar length (time signature): truncates or pads every
+    /// track with silent steps. 12 = 3/4, 16 = 4/4, 20 = 5/4, …
+    public mutating func setStepCount(_ count: Int) {
+        stepCount = count
+        for i in tracks.indices {
+            if tracks[i].steps.count > count {
+                tracks[i].steps.removeLast(tracks[i].steps.count - count)
+            } else if tracks[i].steps.count < count {
+                tracks[i].steps.append(contentsOf:
+                    Array(repeating: Step(), count: count - tracks[i].steps.count))
+            }
+        }
+    }
+
     /// Solo-aware audibility: if any track is soloed, only soloed tracks play.
     public func isAudible(trackIndex: Int) -> Bool {
         let anySolo = tracks.contains { $0.isSoloed }

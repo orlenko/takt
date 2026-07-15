@@ -97,6 +97,27 @@ final class MIDIFileTests: XCTestCase {
         XCTAssertEqual(events.last?.tick, 7680, "end of track closes the full chain")
     }
 
+    func testTimeSignatureMetas() {
+        // 5/4 bar chained into a 4/4 bar: metas at each meter change,
+        // ahead of any note sharing the tick.
+        var five = Pattern(kit: .takt1)
+        five.setStepCount(20)
+        five.tracks[0].steps[0] = Step(velocity: 127)
+        var four = Pattern(kit: .takt1)
+        four.tracks[0].steps[0] = Step(velocity: 127)
+        let data = MIDIFile.data(patterns: [five, four], playOrder: [0, 1], kit: .takt1,
+                                 tempoBPM: 120, swingPercent: 50)
+        let (_, events) = parse(data)
+        let sigs = events.filter { $0.bytes.starts(with: [0xFF, 0x58]) }
+        XCTAssertEqual(sigs.map(\.tick), [0, 20 * 240])
+        XCTAssertEqual(sigs[0].bytes, [0xFF, 0x58, 0x04, 5, 2, 24, 8])
+        XCTAssertEqual(sigs[1].bytes, [0xFF, 0x58, 0x04, 4, 2, 24, 8])
+        // Meta precedes the note-on that shares tick 0.
+        let firstNoteIndex = events.firstIndex { $0.bytes.first == 0x99 }!
+        let firstSigIndex = events.firstIndex { $0.bytes.starts(with: [0xFF, 0x58]) }!
+        XCTAssertLessThan(firstSigIndex, firstNoteIndex)
+    }
+
     func testMutedTracksAreExcluded() {
         var pattern = Pattern(kit: .takt1)
         pattern.tracks[0].steps[0] = Step(velocity: 127)
