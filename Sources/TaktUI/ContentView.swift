@@ -15,6 +15,8 @@ public struct ContentView: View {
             Rectangle().fill(theme.line.swiftUI).frame(height: 1)
             PatternBarView(model: model)
             Rectangle().fill(theme.line.swiftUI).frame(height: 1)
+            SongBarView(model: model)
+            Rectangle().fill(theme.line.swiftUI).frame(height: 1)
             GridView(model: model)
                 .frame(minWidth: 1060, idealWidth: 1100,
                        minHeight: GridNSView.preferredHeight,
@@ -219,12 +221,18 @@ struct PatternBarView: View {
                 .font(.system(size: 9, design: .monospaced).weight(.medium))
                 .kerning(1.2)
                 .foregroundStyle(theme.faint.swiftUI)
-            Button("chain") { model.setLoopChain(true) }
-                .buttonStyle(ChipStyle(theme: theme, active: model.loopChain))
+            Button("chain") { model.setLoopMode(.chain) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .chain))
                 .help("Loop every slot in order")
-            Button("slot") { model.setLoopChain(false) }
-                .buttonStyle(ChipStyle(theme: theme, active: !model.loopChain))
+            Button("slot") { model.setLoopMode(.slot) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .slot))
                 .help("Loop only the slot being edited")
+            Button("song") { model.setLoopMode(.song) }
+                .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .song))
+                .disabled(model.project.song.isEmpty)
+                .help(model.project.song.isEmpty
+                    ? "Build a song in the SONG row first"
+                    : "Follow the song arrangement")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 9)
@@ -262,6 +270,62 @@ struct PatternBarView: View {
             }
             Button("Delete", role: .destructive) { model.deleteSlot(index) }
                 .disabled(model.project.patterns.count <= 1)
+        }
+    }
+}
+
+// MARK: - Song bar
+
+/// The song arrangement: an ordered row of slot×repeat chips (`A×4 B×2 …`).
+/// `+` appends the slot being edited; clicking a chip adds a repeat; the
+/// context menu reorders and removes. The "song" loop mode plays this row.
+struct SongBarView: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let theme = model.theme
+        HStack(spacing: 8) {
+            Text("SONG")
+                .font(.system(size: 9, design: .monospaced).weight(.medium))
+                .kerning(1.2)
+                .foregroundStyle(theme.faint.swiftUI)
+            ForEach(model.project.song.indices, id: \.self) { index in
+                songChip(index)
+            }
+            if model.project.song.count < AppModel.maxSongEntries {
+                Button("+") { model.appendSongEntry() }
+                    .buttonStyle(ChipStyle(theme: theme, active: false, subdued: true))
+                    .help("Append slot \(AppModel.slotName(model.editingSlot)) to the song")
+            }
+            if model.project.song.isEmpty {
+                Text("arrange slots into a song · + adds the slot being edited")
+                    .font(.system(size: 10, design: .monospaced))
+                    .kerning(0.4)
+                    .foregroundStyle(theme.faint.swiftUI)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 9)
+        .background(theme.raised.swiftUI)
+    }
+
+    private func songChip(_ index: Int) -> some View {
+        let theme = model.theme
+        let entry = model.project.song[index]
+        return Button {
+            model.cycleSongRepeats(at: index)
+        } label: {
+            Text("\(AppModel.slotName(entry.slot))×\(entry.repeats)")
+        }
+        .buttonStyle(ChipStyle(theme: theme, active: model.loopMode == .song))
+        .help("Click: one more repeat (wraps past ×\(SongEntry.repeatsRange.upperBound))")
+        .contextMenu {
+            Button("Move Left") { model.moveSongEntry(at: index, by: -1) }
+                .disabled(index == 0)
+            Button("Move Right") { model.moveSongEntry(at: index, by: 1) }
+                .disabled(index == model.project.song.count - 1)
+            Button("Remove", role: .destructive) { model.removeSongEntry(at: index) }
         }
     }
 }

@@ -28,13 +28,28 @@ data class Pattern(val name: String, val tracks: List<Track>) {
     }
 }
 
+/** One song arrangement entry: play pattern `slot`, `repeats` times. */
+data class SongEntry(val slot: Int, val repeats: Int)
+
 data class Project(
     val name: String,
     val tempoBPM: Double,
     val swingPercent: Double,
     val patterns: List<Pattern>,
     val kitId: String = "takt-1",
-)
+    val song: List<SongEntry> = emptyList(),
+) {
+    /**
+     * Pattern indices to loop: the song arrangement if the document has one
+     * (entries pointing at missing slots dropped, repeats clamped to match
+     * the desktop), else every pattern in order.
+     */
+    val playOrder: List<Int>
+        get() = song.flatMap { e ->
+            if (e.slot in patterns.indices) List(e.repeats.coerceIn(1, 16)) { e.slot }
+            else emptyList()
+        }.ifEmpty { patterns.indices.toList() }
+}
 
 object Takt {
     data class Voice(val id: String, val file: String, val chokeGroup: Int?)
@@ -86,12 +101,18 @@ object Takt {
         }
         require(patterns.isNotEmpty()) { "no patterns in file" }
         val kitId = root.optString("kitID", "takt-1")
+        val songJson = root.optJSONArray("song")
+        val song = (0 until (songJson?.length() ?: 0)).map { i ->
+            val entry = songJson!!.getJSONObject(i)
+            SongEntry(entry.getInt("slot"), entry.optInt("repeats", 1))
+        }
         return Project(
             name = name,
             tempoBPM = root.optDouble("tempoBPM", 120.0),
             swingPercent = root.optDouble("swingPercent", 50.0),
             patterns = patterns,
             kitId = if (kits.any { it.id == kitId }) kitId else "takt-1",
+            song = song,
         )
     }
 

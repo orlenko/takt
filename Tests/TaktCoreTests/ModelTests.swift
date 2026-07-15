@@ -78,6 +78,40 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(project.swingPercent, 50)
     }
 
+    func testSongOrderExpansion() {
+        var project = Project(patterns: [Pattern(kit: .takt1), Pattern(kit: .takt1)])
+        XCTAssertEqual(project.songOrder, [], "no song, no order")
+        project.song = [SongEntry(slot: 0, repeats: 2),
+                        SongEntry(slot: 1),
+                        SongEntry(slot: 5, repeats: 3), // deleted slot: dropped
+                        SongEntry(slot: 0)]
+        XCTAssertEqual(project.songOrder, [0, 0, 1, 0])
+    }
+
+    func testSongEntryClampsRepeats() {
+        XCTAssertEqual(SongEntry(slot: 0, repeats: 99).repeats, 16)
+        XCTAssertEqual(SongEntry(slot: 0, repeats: 0).repeats, 1)
+    }
+
+    func testProjectWithSongRoundTrips() throws {
+        var project = Project(patterns: [Pattern(kit: .takt1)])
+        project.song = [SongEntry(slot: 0, repeats: 4), SongEntry(slot: 0)]
+        let data = try JSONEncoder().encode(project)
+        XCTAssertEqual(try JSONDecoder().decode(Project.self, from: data), project)
+    }
+
+    func testPreSongDocumentStillOpens() throws {
+        // .takt files written before song mode have no "song" key.
+        let project = Project(patterns: [Pattern(kit: .takt1)])
+        var json = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(project)) as! [String: Any]
+        json.removeValue(forKey: "song")
+        let legacy = try JSONSerialization.data(withJSONObject: json)
+        let decoded = try JSONDecoder().decode(Project.self, from: legacy)
+        XCTAssertEqual(decoded.song, [])
+        XCTAssertEqual(decoded, project)
+    }
+
     func testSoloBeatsMute() {
         var pattern = Pattern(kit: .takt1)
         // No solo: mute decides.

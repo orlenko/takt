@@ -12,18 +12,20 @@ as WAV or MIDI (including drag-out); never lose work.
 
 Shipped ahead of plan: pattern slots A–H with chaining (loop the whole chain
 in order, or just the slot being edited; `SequencerState.playOrder` already
-supports arbitrary orders like A-A-B for later); style kits (Nine-Oh, Dust)
-sharing the TAKT-1 voice roles; cued pattern switching in the hardware
-tradition (selecting a slot while playing shows it for editing immediately
-and takes over playback at the pattern boundary; content edits stay
-immediate, structure changes land on the bar). Next in this family: song
-mode, a UI over the same playOrder mechanism.
+supports arbitrary orders like A-A-B); style kits (Nine-Oh, Dust) sharing
+the TAKT-1 voice roles; cued pattern switching in the hardware tradition
+(selecting a slot while playing shows it for editing immediately and takes
+over playback at the pattern boundary; content edits stay immediate,
+structure changes land on the bar); song mode (a SONG row of slot×repeat
+entries — `A×4 B×2 A×4 C×1` — as a third loop mode next to chain/slot,
+persisted in the `.takt` document's `song` field; exports and TAKT Run
+follow the arrangement because everything downstream already consumes
+`playOrder`).
 
 Non-goals in v1 (deferred, the model must not preclude them): 32-step UI,
 probability/ratchets, polymeter, user sample import, MIDI learn mode, MIDI
-clock sync, per-step automation, song mode with arbitrary chain orders. The
-model stays agnostic (`stepCount`, `midiOverrides`, `playOrder`), the v1 UI
-does not.
+clock sync, per-step automation. The model stays agnostic (`stepCount`,
+`midiOverrides`, `playOrder`), the v1 UI does not.
 
 ## Build system
 

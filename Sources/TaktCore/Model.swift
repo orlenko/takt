@@ -150,6 +150,20 @@ public struct Pattern: Codable, Equatable, Sendable {
     }
 }
 
+/// One entry in the song arrangement: play pattern slot `slot`, `repeats`
+/// times. `A×4 B×2 A×4 C×1` is four entries.
+public struct SongEntry: Codable, Equatable, Sendable {
+    public var slot: Int
+    public var repeats: Int
+
+    public static let repeatsRange: ClosedRange<Int> = 1...16
+
+    public init(slot: Int, repeats: Int = 1) {
+        self.slot = slot
+        self.repeats = repeats.clamped(to: Self.repeatsRange)
+    }
+}
+
 public struct Project: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var kitID: String
@@ -159,6 +173,8 @@ public struct Project: Codable, Equatable, Sendable {
     public var currentPatternIndex: Int
     /// MIDI note → voice ID remaps (learn mode, v1.1). Empty in v1.
     public var midiOverrides: [UInt8: String]
+    /// The song arrangement; empty means "no song built yet".
+    public var song: [SongEntry]
 
     public static let tempoRange: ClosedRange<Double> = 50...200
     public static let swingRange: ClosedRange<Double> = 50...75
@@ -166,7 +182,7 @@ public struct Project: Codable, Equatable, Sendable {
     public init(schemaVersion: Int = 1, kitID: String = Kit.takt1.id,
                 tempoBPM: Double = 120, swingPercent: Double = 50,
                 patterns: [Pattern], currentPatternIndex: Int = 0,
-                midiOverrides: [UInt8: String] = [:]) {
+                midiOverrides: [UInt8: String] = [:], song: [SongEntry] = []) {
         self.schemaVersion = schemaVersion
         self.kitID = kitID
         self.tempoBPM = tempoBPM.clamped(to: Self.tempoRange)
@@ -174,11 +190,38 @@ public struct Project: Codable, Equatable, Sendable {
         self.patterns = patterns
         self.currentPatternIndex = currentPatternIndex
         self.midiOverrides = midiOverrides
+        self.song = song
+    }
+
+    // `song` arrived after the first shipped .takt files; decode it as
+    // optional so pre-song documents still open.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(schemaVersion: try c.decode(Int.self, forKey: .schemaVersion),
+                  kitID: try c.decode(String.self, forKey: .kitID),
+                  tempoBPM: try c.decode(Double.self, forKey: .tempoBPM),
+                  swingPercent: try c.decode(Double.self, forKey: .swingPercent),
+                  patterns: try c.decode([Pattern].self, forKey: .patterns),
+                  currentPatternIndex: try c.decode(Int.self, forKey: .currentPatternIndex),
+                  midiOverrides: try c.decode([UInt8: String].self, forKey: .midiOverrides),
+                  song: try c.decodeIfPresent([SongEntry].self, forKey: .song) ?? [])
     }
 
     public var currentPattern: Pattern {
         get { patterns[currentPatternIndex] }
         set { patterns[currentPatternIndex] = newValue }
+    }
+
+    /// The song expanded into a pattern play order (`A×2 B×1` → `[0, 0, 1]`).
+    /// Entries pointing at missing slots are dropped; repeats from foreign
+    /// documents are clamped.
+    public var songOrder: [Int] {
+        song.flatMap { entry in
+            patterns.indices.contains(entry.slot)
+                ? Array(repeating: entry.slot,
+                        count: entry.repeats.clamped(to: SongEntry.repeatsRange))
+                : []
+        }
     }
 }
 

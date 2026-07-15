@@ -21,6 +21,8 @@ with giant tempo controls built for mid-stride use.
   velocity.
 - Pattern slots A–H with chaining: duplicate a block, tweak it, loop the
   whole chain in order, or just the slot you're editing.
+- Song mode: arrange slots into a SONG row — `A×4 B×2 A×4 C×1` — and loop
+  the arrangement. Exports render it, and TAKT Run plays it on your phone.
 - Swing (50–75%), per-lane mute/solo, open-hat choke, genre seeds
   (House, Breaks, Hip-Hop, Techno) as starting points.
 - Play it live: QWERTY keys `A S D F G H J K`, or a MIDI keyboard via the GM
@@ -54,8 +56,9 @@ A player plus tempo instrument, not a phone sequencer: pick a beat, start
 it, and adjust tempo as your pace changes, by ±1 taps, hold-to-sweep, a
 draggable BPM readout, or lap presets (easy 160 / tempo 170 / sprint 180).
 Playback is a foreground service, so it keeps going with the screen off. It
-ships the same TAKT-1 samples and a line-for-line port of the timing math,
-and imports the desktop's `.takt` files.
+ships the same samples and a line-for-line port of the timing math, and
+imports the desktop's `.takt` files — if the file has a song arrangement,
+the phone loops the song; otherwise it loops all patterns in order.
 
 Build and sideload instructions: [android/README-ANDROID.md](android/README-ANDROID.md).
 

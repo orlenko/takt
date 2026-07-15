@@ -22,8 +22,13 @@ public final class AppModel: ObservableObject {
     @Published var playingSlot: Int?
     /// Slot cued to take over at the next pattern boundary (nil when none).
     @Published var cuedSlot: Int?
-    /// true: loop the whole chain of slots in order; false: loop the editing slot.
-    @Published var loopChain = true
+
+    enum LoopMode: String, CaseIterable {
+        case chain // loop every slot in order
+        case slot  // loop the slot being edited
+        case song  // follow the song arrangement
+    }
+    @Published var loopMode: LoopMode = .chain
 
     /// The play order currently sounding; cued changes replace it when they
     /// land at a boundary (see Sequencer.onOrderChange).
@@ -196,12 +201,13 @@ public final class AppModel: ObservableObject {
     /// Hardware tradition: what you select is what plays next. While playing,
     /// selecting a slot shows it for editing immediately and cues it to take
     /// over at the pattern boundary; selecting the sounding slot cancels a
-    /// pending cue. While stopped, selection is just selection.
+    /// pending cue. While stopped, selection is just selection. In song mode
+    /// the song drives playback, so slot clicks only choose what to edit.
     func selectSlot(_ index: Int) {
         guard project.patterns.indices.contains(index) else { return }
         project.currentPatternIndex = index
         activeSeedName = nil
-        if isPlaying {
+        if isPlaying, loopMode != .song {
             if index == playingSlot {
                 cuedSlot = nil
                 sequencer?.cueOrder(nil)
@@ -209,22 +215,25 @@ public final class AppModel: ObservableObject {
                 cuedSlot = index
                 sequencer?.cueOrder(cuedOrder(startingAt: index))
             }
-            pushState() // content refresh; play order untouched until the cue lands
-        } else {
-            pushState()
+            // content refresh below; play order untouched until the cue lands
         }
+        pushState()
         gridNeedsDisplay?()
     }
 
     /// Play order when starting fresh (stopped → play).
     private func restingOrder() -> [Int] {
-        loopChain ? Array(project.patterns.indices) : [editingSlot]
+        switch loopMode {
+        case .chain: Array(project.patterns.indices)
+        case .slot: [editingSlot]
+        case .song: project.songOrder.isEmpty ? [editingSlot] : project.songOrder
+        }
     }
 
     /// Play order for a cue: slot mode traps the slot; chain mode continues
-    /// the chain from the cued slot onward.
+    /// the chain from the cued slot onward. (Song mode never cues per slot.)
     private func cuedOrder(startingAt slot: Int) -> [Int] {
-        guard loopChain else { return [slot] }
+        guard loopMode == .chain else { return [slot] }
         let count = project.patterns.count
         return (0..<count).map { (slot + $0) % count }
     }
@@ -234,8 +243,12 @@ public final class AppModel: ObservableObject {
     func duplicateSlot() {
         guard project.patterns.count < Self.maxSlots else { return }
         let copy = project.currentPattern
-        project.patterns.insert(copy, at: project.currentPatternIndex + 1)
+        let insertAt = project.currentPatternIndex + 1
+        project.patterns.insert(copy, at: insertAt)
         project.currentPatternIndex += 1
+        project.song = project.song.map {
+            $0.slot >= insertAt ? SongEntry(slot: $0.slot + 1, repeats: $0.repeats) : $0
+        }
         resyncAfterStructureChange()
     }
 
@@ -255,6 +268,11 @@ public final class AppModel: ObservableObject {
         if project.currentPatternIndex >= project.patterns.count {
             project.currentPatternIndex = project.patterns.count - 1
         }
+        project.song = project.song.compactMap {
+            if $0.slot == index { return nil }
+            return $0.slot > index ? SongEntry(slot: $0.slot - 1, repeats: $0.repeats) : $0
+        }
+        if project.song.isEmpty, loopMode == .song { loopMode = .chain }
         resyncAfterStructureChange()
     }
 
@@ -269,13 +287,74 @@ public final class AppModel: ObservableObject {
         gridNeedsDisplay?()
     }
 
-    func setLoopChain(_ chain: Bool) {
-        loopChain = chain
-        if isPlaying {
-            // Structure change: land it on the boundary like any other cue.
-            let target = chain ? (playingSlot ?? editingSlot) : editingSlot
-            sequencer?.cueOrder(cuedOrder(startingAt: target))
-            cuedSlot = target == playingSlot ? nil : target
+    func setLoopMode(_ mode: LoopMode) {
+        guard loopMode != mode else { return }
+        loopMode = mode
+        cueRestingOrder()
+    }
+
+    /// Land the current mode's play order at the pattern boundary (playing)
+    /// or just make it the next start order (stopped).
+    private func cueRestingOrder() {
+        guard isPlaying else {
+            pushState()
+            return
+        }
+        let order: [Int] = switch loopMode {
+        case .chain: cuedOrder(startingAt: playingSlot ?? editingSlot)
+        case .slot: [editingSlot]
+        case .song: restingOrder()
+        }
+        sequencer?.cueOrder(order)
+        cuedSlot = order.first == playingSlot ? nil : order.first
+    }
+
+    // MARK: - Song
+
+    static let maxSongEntries = 16
+
+    /// Appends the slot being edited to the end of the song.
+    func appendSongEntry() {
+        guard project.song.count < Self.maxSongEntries else { return }
+        project.song.append(SongEntry(slot: editingSlot))
+        songDidChange()
+    }
+
+    /// Left click on a song chip: one more repeat, wrapping back to ×1 past
+    /// the cap (the velocity-cycle idiom).
+    func cycleSongRepeats(at index: Int) {
+        guard project.song.indices.contains(index) else { return }
+        let repeats = project.song[index].repeats
+        project.song[index].repeats = repeats >= SongEntry.repeatsRange.upperBound
+            ? SongEntry.repeatsRange.lowerBound : repeats + 1
+        songDidChange()
+    }
+
+    func removeSongEntry(at index: Int) {
+        guard project.song.indices.contains(index) else { return }
+        project.song.remove(at: index)
+        if project.song.isEmpty, loopMode == .song {
+            loopMode = .chain // nothing left to follow
+            cueRestingOrder()
+        } else {
+            songDidChange()
+        }
+    }
+
+    func moveSongEntry(at index: Int, by delta: Int) {
+        let target = index + delta
+        guard project.song.indices.contains(index),
+              project.song.indices.contains(target) else { return }
+        project.song.swapAt(index, target)
+        songDidChange()
+    }
+
+    /// Song edits are structure changes: while the song is driving playback
+    /// they land at the pattern boundary and restart the arrangement. In
+    /// chain/slot modes they leave playback alone.
+    private func songDidChange() {
+        if isPlaying, loopMode == .song {
+            cueRestingOrder()
         } else {
             pushState()
         }

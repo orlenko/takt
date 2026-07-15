@@ -100,16 +100,20 @@ object Engine {
         var cursor = 0L
         var nextStepFrame = 0L
         var stepIndex = 0
-        var patternPos = 0
+        var orderPos = 0
 
+        // The scheduler walks the project's playOrder (the song arrangement
+        // if the .takt has one, else every pattern in order), matching the
+        // desktop sequencer.
         fun fireStep() {
             val p = project
-            if (patternPos >= p.patterns.size) patternPos = 0
-            var pattern = p.patterns[patternPos]
+            val order = p.playOrder
+            if (orderPos >= order.size) orderPos = 0
+            var pattern = p.patterns[order[orderPos].coerceIn(0, p.patterns.size - 1)]
             if (stepIndex >= pattern.stepCount) {
                 stepIndex = 0
-                patternPos = (patternPos + 1) % p.patterns.size
-                pattern = p.patterns[patternPos]
+                orderPos = (orderPos + 1) % order.size
+                pattern = p.patterns[order[orderPos].coerceIn(0, p.patterns.size - 1)]
             }
 
             val samples = kits[kitId] ?: kits.values.first()
@@ -133,7 +137,7 @@ object Engine {
             stepIndex += 1
             if (stepIndex >= pattern.stepCount) {
                 stepIndex = 0
-                patternPos = (patternPos + 1) % p.patterns.size
+                orderPos = (orderPos + 1) % order.size
             }
         }
 
