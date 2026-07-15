@@ -17,7 +17,7 @@ public final class AppModel: ObservableObject {
     @Published var activeSeedName: String?
     @Published var engineError: String?
     @Published var midiSourceNames: [String] = []
-    @Published var isExporting = false
+    @Published public private(set) var isExporting = false
     /// Pattern slot currently sounding (nil when stopped).
     @Published var playingSlot: Int?
     /// Slot cued to take over at the next pattern boundary (nil when none).
@@ -625,8 +625,19 @@ public final class AppModel: ObservableObject {
         return "takt-\(base)-\(bpm)bpm\(suffix).\(ext)"
     }
 
+    /// File-menu wrappers: export is a document verb, so it lives on the
+    /// File menu (canonical, with shortcuts); the status-bar chips remain
+    /// the fast path.
+    public func exportWAV(passes: Int) {
+        exportAudio(format: .wav, cycles: passes)
+    }
+
+    public func exportJogMix(minutes: Double) {
+        exportAudio(format: .m4a, minutes: minutes)
+    }
+
     /// Standard MIDI File of one chain pass, following the loop mode.
-    func exportMIDI() {
+    public func exportMIDI() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.midi]
         panel.nameFieldStringValue = defaultExportName(ext: "mid")

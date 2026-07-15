@@ -24,6 +24,24 @@ struct TaktApp: App {
                 Button("Open…") { model.openProject() }
                     .keyboardShortcut("o", modifiers: .command)
             }
+            CommandGroup(replacing: .importExport) {
+                Button("Export MIDI…") { model.exportMIDI() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                    .disabled(model.isExporting)
+                Menu("Export WAV") {
+                    Button("1 Pass…") { model.exportWAV(passes: 1) }
+                        .keyboardShortcut("e", modifiers: .command)
+                    Button("2 Passes…") { model.exportWAV(passes: 2) }
+                    Button("4 Passes…") { model.exportWAV(passes: 4) }
+                }
+                .disabled(model.isExporting)
+                Menu("Export Jog Mix (m4a)") {
+                    ForEach([5, 10, 20, 30], id: \.self) { minutes in
+                        Button("\(minutes) Minutes…") { model.exportJogMix(minutes: Double(minutes)) }
+                    }
+                }
+                .disabled(model.isExporting)
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { model.undo() }
                     .keyboardShortcut("z", modifiers: .command)
