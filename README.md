@@ -50,14 +50,18 @@ Requires macOS 14+ and a Swift 6 toolchain (Xcode 16 or newer). No
 third-party dependencies.
 
 ```sh
-swift run takt              # build and launch the app
-swift test                  # timing math, model, MIDI bytes, audio bounce tests
-swift run takt-bounce       # render the seed patterns to preview/*.wav
-swift run takt-render-kit   # re-bake the TAKT-1 kit (only if voice DSP changes)
+make debug                  # build and launch the app
+make prod                   # release build, then launch
+make build                  # build only, no launch
+make test                   # timing math, model, MIDI bytes, audio bounce tests
+make bounce                 # render the seed patterns to preview/*.wav
+make kit                    # re-bake the TAKT-1 kit (only if voice DSP changes)
 ```
 
-(If you are building inside a sandboxed environment, add
-`--disable-sandbox`; see CLAUDE.md.)
+`make help` lists every target. The Makefile passes `--disable-sandbox`
+to SPM because its sandbox cannot nest inside a sandboxed shell; the
+raw equivalents are `swift run takt`, `swift test`, `swift run
+takt-bounce`, `swift run takt-render-kit`.
 
 ## TAKT Run (Android)
 
